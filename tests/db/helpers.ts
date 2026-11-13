@@ -112,3 +112,71 @@ export async function aChildId(pool: pg.Pool): Promise<string> {
   );
   return rows[0].id;
 }
+
+/**
+ * Run a query as a given signed-in family member, the way the browser does.
+ *
+ * The readiness and transition functions are SECURITY DEFINER and derive both
+ * the actor and the household from the session, so a test that queried as the
+ * superuser would prove nothing about who is allowed to see or do what.
+ */
+export async function asMember<T>(
+  pool: pg.Pool,
+  authId: string,
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("set role authenticated");
+    await client.query("select set_config('request.jwt.claims', $1, false)", [
+      JSON.stringify({ sub: authId, role: "authenticated" }),
+    ]);
+    return await fn(client);
+  } finally {
+    await client.query("reset role").catch(() => {});
+    await client
+      .query("select set_config('request.jwt.claims', null, false)")
+      .catch(() => {});
+    client.release();
+  }
+}
+
+/**
+ * Give a seeded parent a real login and return the ids, idempotently.
+ *
+ * Children deliberately cannot have one (the schema forbids it), so every test
+ * that needs an acting principal uses a parent until slice 5 brings the device
+ * and actor-token paths.
+ */
+export async function linkParent(
+  pool: pg.Pool,
+  displayName: string,
+  email: string,
+): Promise<{ memberId: string; authId: string; householdId: string }> {
+  const { createClient } = await import("@supabase/supabase-js");
+  const admin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+
+  const { data: existing } = await admin.auth.admin.listUsers();
+  let authId = existing.users.find((u) => u.email === email)?.id;
+  if (!authId) {
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password: "test-only-password",
+      email_confirm: true,
+    });
+    if (error) throw error;
+    authId = data.user.id;
+  }
+
+  const { rows } = await pool.query<{ id: string; household_id: string }>(
+    `update family_members set auth_user_id = $1 where display_name = $2
+     returning id, household_id`,
+    [authId, displayName],
+  );
+  if (rows.length === 0) throw new Error(`No member named ${displayName}`);
+  return { memberId: rows[0].id, authId: authId!, householdId: rows[0].household_id };
+}
