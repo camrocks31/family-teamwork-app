@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Inter, Outfit } from "next/font/google";
 import "./globals.css";
 
@@ -10,7 +11,14 @@ export const metadata: Metadata = {
   description: "What the house needs, and what's ready.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// The props are typed explicitly rather than with Next's generated
+// `LayoutProps` global. That global only exists after a build has written
+// .next/types, so depending on it makes `tsc` pass locally (where a build has
+// already run) and fail on a clean checkout — which is exactly what happened
+// on the first CI run.
+export default function RootLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
   return (
     <html
       lang="en"

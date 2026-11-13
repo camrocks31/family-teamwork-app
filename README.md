@@ -20,10 +20,15 @@ modifiable by anyone. Nothing in it is trusted:
   only the anon key — public by design, and useless without a policy that lets
   it see a row.
 
-`output: "export"` is part of the guard: the build fails on route handlers,
-middleware or server actions, so server-side code cannot drift in unnoticed.
-`scripts/check-static-export.mjs` proves that by adding one and asserting the
-build breaks.
+What stops server code creeping in is **`scripts/check-static-export.mjs`**, a
+source scan that runs in CI and fails on route handlers, middleware, server
+actions, `next/headers`, `next/server` or `force-dynamic`.
+
+It is a scan rather than a build check for a measured reason: with Next 16.4.6,
+`output: "export"` does **not** fail the build on any of those, even though the
+docs list them as unsupported. They build, deploy, and then silently do nothing
+— GitHub Pages serves files, it does not run code. A quiet failure is worse
+than a loud one, so the scan is the guard.
 
 ## Privacy
 

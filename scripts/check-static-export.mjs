@@ -1,74 +1,122 @@
 #!/usr/bin/env node
 /**
- * HAL-1539 acceptance criterion 1, second half.
+ * Fail if server-only code has crept into a repository that ships as a static
+ * export.
  *
- * "The build fails on a route handler, middleware or server action" is a claim
- * about a guard, and a guard nobody tests is a guard nobody knows works. This
- * script temporarily adds a dynamic route handler, runs the build, and asserts
- * it fails — then removes it again.
+ * WHY THIS IS A SOURCE SCAN AND NOT A BUILD CHECK
  *
- * It matters because the whole security model rests on it: with no application
- * server, every trusted decision must live in Supabase. If server code could
- * creep into this repo and quietly build, the thing enforcing that would be
- * nothing but a reviewer's attention.
+ * The first version of this script planted a dynamic route handler and asserted
+ * that `next build` failed. It appeared to pass — but only because an unrelated
+ * TypeScript error was failing the build at the time. Once that was fixed, the
+ * truth came out: with Next 16.4.6 and `output: "export"`, a route handler that
+ * reads Request, a page calling `cookies()`, and a server action ALL build
+ * without error, despite the installed docs listing them as unsupported.
+ *
+ * That is worse than a loud failure. Such code builds, deploys to GitHub Pages,
+ * and then simply does not work — there is no server to run it. So the guard
+ * cannot be "the build will catch it". This scan is the guard.
+ *
+ * Checked against: node_modules/next/dist/docs/01-app/02-guides/static-exports.md
+ * (the "Unsupported Features" list), verified empirically on 2026-11-13.
  */
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const GUARD_DIR = path.join(process.cwd(), "src", "app", "__export_guard__");
-const GUARD_FILE = path.join(GUARD_DIR, "route.ts");
+const ROOTS = ["src", "app", "pages"];
 
-const OFFENDING_ROUTE = `// Temporary file written by scripts/check-static-export.mjs.
-// A route handler that reads the request cannot be statically exported.
-export async function GET(request: Request) {
-  const who = request.headers.get("x-who") ?? "nobody";
-  return new Response(JSON.stringify({ who }), {
-    headers: { "content-type": "application/json" },
-  });
-}
-`;
+/** Each rule: why it cannot work without a server. */
+const CONTENT_RULES = [
+  {
+    // Not anchored to the start of a line: the directive is just as valid
+    // inside a function body as at the top of a file, and the first version of
+    // this rule missed exactly that case.
+    pattern: /["']use server["']/,
+    what: "a server action (\"use server\")",
+    why: "server actions post back to a server; there is none.",
+  },
+  {
+    pattern: /from\s+["']next\/headers["']/,
+    what: "an import from next/headers",
+    why: "cookies() and headers() read a request that never reaches a server.",
+  },
+  {
+    pattern: /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']/,
+    what: "export const dynamic = \"force-dynamic\"",
+    why: "a statically exported page cannot be rendered per request.",
+  },
+  {
+    pattern: /from\s+["']next\/server["']/,
+    what: "an import from next/server",
+    why: "NextRequest/NextResponse only exist in a server runtime.",
+  },
+];
 
-function runBuild() {
-  return new Promise((resolve) => {
-    const child = spawn("npx", ["next", "build"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
-    });
-    let output = "";
-    child.stdout.on("data", (d) => (output += d));
-    child.stderr.on("data", (d) => (output += d));
-    child.on("close", (code) => resolve({ code, output }));
-  });
-}
+/** Files that cannot exist at all. */
+const FORBIDDEN_BASENAMES = new Map([
+  ["route.ts", "a Route Handler"],
+  ["route.tsx", "a Route Handler"],
+  ["route.js", "a Route Handler"],
+  ["middleware.ts", "middleware"],
+  ["middleware.js", "middleware"],
+  ["proxy.ts", "a proxy"],
+]);
 
-let failed = false;
-try {
-  await mkdir(GUARD_DIR, { recursive: true });
-  await writeFile(GUARD_FILE, OFFENDING_ROUTE, "utf8");
-
-  console.log("Added a dynamic route handler; the build must now fail.");
-  const { code, output } = await runBuild();
-
-  if (code === 0) {
-    console.error(
-      "\nFAIL: the build SUCCEEDED with a dynamic route handler present.\n" +
-        "output: 'export' is not actually guarding this repository, so server " +
-        "code could ship without anyone noticing. Check next.config.ts.",
-    );
-    failed = true;
-  } else {
-    const reason = output
-      .split("\n")
-      .filter((l) => /export|route|static|dynamic/i.test(l))
-      .slice(0, 4)
-      .join("\n  ");
-    console.log(`\nPASS: the build failed as required (exit ${code}).`);
-    if (reason) console.log(`  ${reason}`);
+async function* walk(dir) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // root does not exist in this project; fine
   }
-} finally {
-  await rm(GUARD_DIR, { recursive: true, force: true });
-  console.log("Removed the temporary route handler.");
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      yield* walk(full);
+    } else {
+      yield full;
+    }
+  }
 }
 
-process.exit(failed ? 1 : 0);
+const findings = [];
+
+for (const root of ROOTS) {
+  for await (const file of walk(path.join(process.cwd(), root))) {
+    const rel = path.relative(process.cwd(), file);
+    const base = path.basename(file);
+
+    const forbidden = FORBIDDEN_BASENAMES.get(base);
+    if (forbidden) {
+      findings.push(
+        `${rel}\n    is ${forbidden}, which needs a server at request time.`,
+      );
+      continue;
+    }
+
+    if (!/\.(ts|tsx|js|jsx|mjs)$/.test(base)) continue;
+    const source = await readFile(file, "utf8");
+    for (const rule of CONTENT_RULES) {
+      if (rule.pattern.test(source)) {
+        findings.push(`${rel}\n    contains ${rule.what} — ${rule.why}`);
+      }
+    }
+  }
+}
+
+if (findings.length > 0) {
+  console.error(
+    "Server-only code found in a statically exported app.\n\n" +
+      findings.map((f) => `  ${f}`).join("\n\n") +
+      "\n\nThis would build and deploy, and then silently not work: GitHub Pages\n" +
+      "serves files, it does not run code. Anything that must be trusted or\n" +
+      "run on a server belongs in a Postgres SECURITY DEFINER function or a\n" +
+      "Supabase Edge Function instead. See HAL-1538 §2.4.\n",
+  );
+  process.exit(1);
+}
+
+console.log(
+  "No server-only code found: no route handlers, middleware, server actions, " +
+    "next/headers or next/server imports.",
+);

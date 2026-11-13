@@ -9,10 +9,13 @@ import type { NextConfig } from "next";
  * Consequences enforced here, and verified against the installed
  * Next.js 16.4.6 docs (node_modules/next/dist/docs/01-app/02-guides/static-exports.md):
  *
- *   - `output: "export"` makes the build fail on route handlers that read
- *     Request, server actions, cookies, rewrites/redirects/headers, proxy,
- *     ISR, draft mode and intercepting routes. That failure is the guard:
- *     nothing trusted can drift into the client bundle unnoticed.
+ *   - The build does NOT reject server code, despite the docs listing route
+ *     handlers, cookies() and server actions as unsupported. Measured on
+ *     2026-11-13 with this version: all three build cleanly under
+ *     `output: "export"`. They would then deploy and silently not work, since
+ *     GitHub Pages serves files and runs nothing. The guard is therefore
+ *     `scripts/check-static-export.mjs`, a source scan run in CI — not the
+ *     build. Do not reintroduce the assumption that the build catches this.
  *   - Dynamic route segments are unsupported without generateStaticParams,
  *     and our ids are runtime data, so no route uses one. A single space is
  *     reached as /house?space=<id> and resolved client-side.
