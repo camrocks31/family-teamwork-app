@@ -7,7 +7,10 @@
 -- the family can edit (spaces, definitions, activities, requirement groups) is
 -- a table, per HAL-1538 requirement 1.
 
-create extension if not exists pgcrypto;
+-- pgcrypto is already installed by Supabase in the `extensions` schema, so
+-- this is a no-op there and a safety net anywhere else. Functions that use it
+-- (crypt, digest, gen_random_bytes) must include `extensions` in their pinned
+-- search_path; `public` alone does not see it.
 
 -- Parents administer; children act through a profile. Both are family members.
 create type member_role as enum ('parent', 'child');

@@ -434,10 +434,10 @@ describe("a session with no family member can do nothing", () => {
   });
 });
 
-// Deferred to slice 5, where the device and member-actor principals exist.
-// Children have no login by design (family_members forbids it), so there is no
-// non-parent principal to test these with yet. Listed rather than dropped.
-describe.skip("child-actor authority (slice 5)", () => {
-  it.skip("AC11 — return, approve and exempt are refused for a child actor", () => {});
-  it.skip("AC13 — a child cannot complete a task whose revision requires approval", () => {});
-});
+// AC11 (return/approve/exempt refused for a child actor) and AC13 (a child
+// cannot complete a task that needs checking) were deferred from this slice
+// because children have no login and there was no non-parent principal to
+// test with. Slice 5 added the device and actor-token paths, and both are now
+// covered for real in tests/db/kiosk.test.ts — along with the sharper case
+// the brief names outright: a PARENT's own PIN on the family iPad still
+// cannot approve.

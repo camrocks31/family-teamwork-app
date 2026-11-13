@@ -192,11 +192,8 @@ describe("the last task finishes the house (AC2 — parent spec test 3)", () => 
     await resetDay(WEEKEND);
     const at = await moment(WEEKEND, "14:00");
 
-    const { rows: last } = await pool.query<{ id: string }>(
-      `select ti.id from task_instances ti where ti.occurrence_date = $1
-         and ti.occurrence_mode = 'shared' limit 1`,
-      [WEEKEND],
-    );
+    const req = await requirementInstance(games, children[0].id, WEEKEND);
+    const last = [{ id: req.instance_id }];
     await satisfyAllExcept(WEEKEND, [last[0].id]);
 
     expect((await readiness(children[0].id, games, at)).status).toBe("not_ready");
