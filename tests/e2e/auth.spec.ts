@@ -118,3 +118,72 @@ test("a wrong password does not reveal whether the account exists", async ({
   await expect(alert).toHaveText(/did not match/i);
   await expect(alert).not.toHaveText(/not found|no account|unknown/i);
 });
+
+/**
+ * HAL-1545 — the forgot-password flow.
+ *
+ * A family app whose only way back in is "ask the person who set it up" is a
+ * trap, so this is a real route rather than a dashboard chore. These run
+ * against the built export, like everything else here.
+ */
+
+test("a parent can ask for a reset link without revealing who has an account", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Forgot your password?" }).click();
+
+  await expect(page.getByRole("heading", { name: "Reset your password" })).toBeVisible();
+
+  // An address that certainly has no account here.
+  await page.getByLabel("Email").fill("definitely-nobody@example.test");
+  await page.getByRole("button", { name: "Send reset link" }).click();
+
+  const status = page.getByRole("main").getByRole("status");
+  await expect(status).toBeVisible();
+  // The whole point: the same answer either way. Anything that distinguished
+  // the two would let a stranger on a public URL test which addresses exist.
+  await expect(status).toHaveText(/if an account exists/i);
+  await expect(status).not.toHaveText(/no account|not found|unknown|doesn't exist/i);
+});
+
+test("the reset form carries the email already typed, and can be backed out of", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("Email").fill("someone@example.test");
+  await page.getByRole("button", { name: "Forgot your password?" }).click();
+
+  await expect(page.getByLabel("Email")).toHaveValue("someone@example.test");
+
+  await page.getByRole("button", { name: "Back to sign in" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+test("a dead reset link says so instead of spinning", async ({ page }) => {
+  // Supabase reports a used or expired link in the URL fragment, which never
+  // reaches a server — so the page has to notice it client-side.
+  await page.goto(
+    "/reset/#error=access_denied&error_code=otp_expired" +
+      "&error_description=Email+link+is+invalid+or+has+expired",
+  );
+
+  // Scoped to the page's own content: Next renders a route announcer with
+  // role="alert" outside <main>, which would otherwise match too.
+  const alert = page.getByRole("main").getByRole("alert");
+  await expect(alert).toBeVisible();
+  await expect(alert).toHaveText(/invalid or has expired/i);
+  await expect(page.getByRole("link", { name: "Back to sign in" })).toBeVisible();
+  // And it must not be offering a password box for a link that is no good.
+  await expect(page.getByLabel("New password")).toHaveCount(0);
+});
+
+test("the reset page does not offer a password box without a session", async ({ page }) => {
+  await page.goto("/reset/");
+  // No token at all: it waits briefly, then says the link is no good rather
+  // than presenting a form that could not possibly work.
+  await expect(page.getByRole("main").getByRole("alert")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByLabel("New password")).toHaveCount(0);
+});

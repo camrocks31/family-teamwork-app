@@ -53,3 +53,19 @@ export function getSupabaseClient(): SupabaseClient {
   });
   return cached;
 }
+
+/**
+ * An absolute URL for a page of this app, for Supabase to redirect back to.
+ *
+ * The deployed site lives under a base path (a GitHub Pages project site is
+ * served from /<repo>/), and a recovery email is opened on whatever device
+ * happens to be to hand — so the link has to carry the real origin and the
+ * real prefix, not a relative path. Supabase also refuses to redirect anywhere
+ * that is not on the project's allowlist, which makes a wrong value here fail
+ * loudly rather than quietly.
+ */
+export function appUrl(path: string): string {
+  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  return `${origin}${base}${path}`;
+}

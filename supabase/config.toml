@@ -158,11 +158,30 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
+# LOCAL ONLY. The hosted project's Site URL is
+#   https://camrocks31.github.io/family-teamwork-app
+# and is set in the Supabase dashboard, NOT from this file.
+#
+# Do not "fix" that by running `supabase config push`. This file is a
+# local development config, and pushing it carries a dozen unrelated
+# settings with it: it would disable email confirmations, drop the email
+# rate limit from a minute to a second, shorten OTPs from 8 to 6 and turn
+# off MFA enrolment on the live project. Checked with `supabase config
+# diff --remote` on 2026-11-13 — 16 differences, most of them unwanted.
 site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# Supabase refuses to redirect anywhere not listed here, so the reset page
+# has to be allowed explicitly — on the deployed site and on each address
+# the app is developed and tested against.
+additional_redirect_urls = [
+  "https://camrocks31.github.io/family-teamwork-app/**",
+  "http://127.0.0.1:3000/**",
+  "http://localhost:3000/**",
+  "http://127.0.0.1:4173/**",
+  "http://localhost:4173/**",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -175,13 +194,19 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project. Existing users can still sign in.
-enable_signup = true
+# No public sign-up. The app is served from a public URL, so an open
+# sign-up endpoint would let anyone in the world create an account against
+# this household's backend. Parents are created deliberately; children have
+# no accounts at all. See HAL-1539.
+enable_signup = false
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = false
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
-minimum_password_length = 6
+# Set to 8 so the database agrees with the reset page, which asks for 8.
+# A client-side rule the server does not share is a suggestion, not a rule.
+minimum_password_length = 8
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""

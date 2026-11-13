@@ -128,6 +128,21 @@ in your local `.env.local` and in Edge Function secrets, nowhere else.
 
 **2. Pages source** — Settings → Pages → Source: **GitHub Actions**.
 
+**2a. Supabase auth settings**, in the dashboard. These are deliberately *not*
+in `supabase/config.toml`: that file configures the local development stack,
+and `supabase config push` would carry a dozen unrelated settings into
+production with it.
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Authentication → URL Configuration → Site URL | the deployed site | Supabase builds the links in its emails from this, so a reset link is useless if it is wrong |
+| Authentication → URL Configuration → Redirect URLs | `<site>/**` | Supabase refuses to redirect anywhere unlisted, which is what makes the reset page reachable |
+| Authentication → Sign In / Providers → Email → Allow new users to sign up | **off** | The app is on a public URL. Left on, anyone in the world can create an account against this household's backend |
+
+Password reset relies on Supabase sending email. The built-in sender is rate
+limited and intended for testing; configure your own SMTP before relying on
+it.
+
 **3. Push the schema** to the hosted project:
 
 ```bash
