@@ -34,7 +34,10 @@ afterAll(async () => {
   await pool.end();
 });
 
-const TODAY = "2026-11-13";
+// A date no other suite materializes. These tests insert their own rows to
+// provoke constraint violations, so they must not collide with the real
+// instances the transition suite creates for the current day.
+const TODAY = "2030-06-01";
 
 describe("occurrence mode cannot disagree with its definition (AC4)", () => {
   it("refuses an instance whose occurrence_mode differs from the definition's", async () => {
