@@ -59,16 +59,51 @@ export interface DashboardPayload {
   progress: { done: number; total: number };
 }
 
+/**
+ * The dashboard, with today's tasks created if nobody has opened the app yet.
+ *
+ * Materializing the day belongs HERE, not in whoever happens to open a task
+ * list first. Without it the hub shows a house with nothing in it: "0 of 0
+ * jobs done", every activity reporting that its requirements have "no task
+ * for today yet", and a full green progress bar over a household that has
+ * done nothing. That is exactly what the first real morning looked like.
+ *
+ * It was missed because the end-to-end test called ensure_day_materialized in
+ * its own fixture before loading the page — so the test created the day the
+ * app was supposed to create, and passed. A fixture that does the
+ * application's work tests the fixture.
+ *
+ * The evaluator has to run first because only it knows the household's local
+ * date, and a second evaluation runs only when the day was actually created,
+ * so an ordinary load costs one extra round trip and no extra work.
+ */
 export async function fetchDashboard(
   householdId: string,
   at: Date = new Date(),
 ): Promise<DashboardPayload> {
-  const { data, error } = await getSupabaseClient().rpc("evaluate_household_dashboard", {
-    p_household_id: householdId,
-    p_evaluated_at: at.toISOString(),
-  });
-  if (error) throw new Error(error.message);
-  return data as DashboardPayload;
+  const supabase = getSupabaseClient();
+
+  const evaluate = async (): Promise<DashboardPayload> => {
+    const { data, error } = await supabase.rpc("evaluate_household_dashboard", {
+      p_household_id: householdId,
+      p_evaluated_at: at.toISOString(),
+    });
+    if (error) throw new Error(error.message);
+    return data as DashboardPayload;
+  };
+
+  const payload = await evaluate();
+
+  const { data: created, error: materializeError } = await supabase.rpc(
+    "ensure_day_materialized",
+    { p_household_id: householdId, p_local_date: payload.local_date },
+  );
+  // Deliberately fatal. A hub that cannot create the day has nothing true to
+  // show, and the one thing worse than an error here is the screen that
+  // prompted this change: one that looked fine and meant nothing.
+  if (materializeError) throw new Error(materializeError.message);
+
+  return (created as number) > 0 ? await evaluate() : payload;
 }
 
 /** Wall-clock parts in the household's timezone, not the device's. */

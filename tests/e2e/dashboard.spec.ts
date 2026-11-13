@@ -221,3 +221,79 @@ test("works at phone width without sideways scrolling", async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0);
   await expect(page.getByRole("heading", { name: "Play Video Games" })).toBeVisible();
 });
+
+test("the hub creates the day itself when nobody has opened it yet", async ({ page }) => {
+  // The bug this pins: ensure_day_materialized existed, was granted to the
+  // client, and had a helper in src/lib/tasks.ts commented "safe to call from
+  // every device, every load" — and nothing called it. The first real morning
+  // showed a house of 0 of 0 jobs, a full green progress bar over a household
+  // that had done nothing, and every activity reporting that its requirements
+  // had "no task for today yet".
+  //
+  // It survived the suite because the fixture above calls
+  // ensure_day_materialized before the page loads, so the TEST created the day
+  // the APP was supposed to create. This test deletes the day first, so the
+  // only thing that can bring it back is the application.
+  // task_events and task_operations reference instances with RESTRICT, not
+  // CASCADE — deliberately, since an audit row outliving nothing is the point
+  // — so the day has to be dismantled in order.
+  const { data: todays } = await admin
+    .from("task_instances")
+    .select("id")
+    .eq("occurrence_date", today);
+  const ids = (todays ?? []).map((r) => r.id);
+  if (ids.length > 0) {
+    for (const table of ["task_events", "task_operations"]) {
+      const { error } = await admin.from(table).delete().in("task_instance_id", ids);
+      if (error) throw new Error(`could not clear ${table}: ${error.message}`);
+    }
+  }
+  const { error: clearError } = await admin
+    .from("task_instances")
+    .delete()
+    .eq("occurrence_date", today);
+  if (clearError) throw new Error(`could not clear the day: ${clearError.message}`);
+
+  const { count: before } = await admin
+    .from("task_instances")
+    .select("id", { count: "exact", head: true })
+    .eq("occurrence_date", today);
+  expect(before, "the day should start empty for this test").toBe(0);
+
+  await signIn(page);
+
+  // The house reports real work, not an empty day dressed up as a finished one.
+  const progress = page.getByText(/\d+ of \d+ jobs done/);
+  await expect(progress).toBeVisible();
+  const total = Number((await progress.textContent())!.match(/of (\d+)/)![1]);
+  expect(total, "the dashboard should have created today's tasks").toBeGreaterThan(0);
+
+  const { count: after } = await admin
+    .from("task_instances")
+    .select("id", { count: "exact", head: true })
+    .eq("occurrence_date", today);
+  expect(after).toBeGreaterThan(0);
+});
+
+test("each activity tile says whose it is", async ({ page }) => {
+  // Three tiles that happen to agree are indistinguishable from the same list
+  // printed three times, which is how this read on the wall.
+  await signIn(page);
+  const card = page.getByRole("region", { name: "Play Video Games" });
+  await expect(card).toBeVisible();
+
+  // Every child the activity was evaluated for is named inside the card, so
+  // three tiles can never again read as one list repeated.
+  const { data: children } = await admin
+    .from("family_members")
+    .select("display_name")
+    .eq("household_id", householdId)
+    .eq("role", "child");
+  expect(children!.length).toBeGreaterThan(1);
+  for (const child of children!) {
+    await expect(
+      card.getByText(child.display_name, { exact: false }).first(),
+      `${child.display_name} should be named on their own tile`,
+    ).toBeVisible();
+  }
+});

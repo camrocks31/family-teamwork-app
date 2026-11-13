@@ -162,7 +162,7 @@ export function Dashboard() {
       <div className="mt-6 grid gap-5 lg:grid-cols-[1.45fr_1fr]">
         <div className="flex flex-col gap-5">
           {data.activities.map((a) => (
-            <ActivityCard key={a.id} activity={a} />
+            <ActivityCard key={a.id} activity={a} members={data.members} />
           ))}
           <HouseCard data={data} />
         </div>
@@ -214,9 +214,20 @@ function Header({ data }: { data: DashboardPayload }) {
   );
 }
 
-function ActivityCard({ activity }: { activity: DashboardActivity }) {
-  // One card per child: the same activity is legitimately ready for one and
+function ActivityCard({
+  activity,
+  members,
+}: {
+  activity: DashboardActivity;
+  members: { id: string; display_name: string; avatar_emoji: string | null }[];
+}) {
+  // One tile per child: the same activity is legitimately ready for one and
   // not another, so a single household answer would be wrong for someone.
+  //
+  // Each tile MUST name its child. Unlabelled, three tiles that happen to
+  // agree read as the same list printed three times — which is how this
+  // first looked on the wall, and a fair reading of it.
+  const nameOf = new Map(members.map((m) => [m.id, m]));
   return (
     <section
       aria-labelledby={`activity-${activity.id}`}
@@ -234,7 +245,7 @@ function ActivityCard({ activity }: { activity: DashboardActivity }) {
       <ul className="mt-4 grid gap-3 sm:grid-cols-3">
         {activity.per_member.map((r) => (
           <li key={r.member_id}>
-            <ReadinessTile result={r} />
+            <ReadinessTile result={r} member={nameOf.get(r.member_id)} />
           </li>
         ))}
       </ul>
@@ -242,7 +253,13 @@ function ActivityCard({ activity }: { activity: DashboardActivity }) {
   );
 }
 
-function ReadinessTile({ result }: { result: ReadinessResult }) {
+function ReadinessTile({
+  result,
+  member,
+}: {
+  result: ReadinessResult;
+  member?: { display_name: string; avatar_emoji: string | null };
+}) {
   const ready = result.status === "ready_to_ask" || result.status === "approved";
   const label =
     result.status === "approved"
@@ -261,6 +278,14 @@ function ReadinessTile({ result }: { result: ReadinessResult }) {
           : "border-attention-line bg-attention-wash"
       }`}
     >
+      {member && (
+        <p className="mb-1.5 flex items-center gap-1.5 font-[family-name:var(--font-display)] text-sm font-semibold">
+          {member.avatar_emoji && (
+            <span aria-hidden="true">{member.avatar_emoji}</span>
+          )}
+          {member.display_name}
+        </p>
+      )}
       <p className="flex items-center gap-2">
         <span
           aria-hidden="true"
