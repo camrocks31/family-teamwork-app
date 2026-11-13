@@ -160,14 +160,26 @@ enabled = true
 # in emails.
 # LOCAL ONLY. The hosted project's Site URL is
 #   https://camrocks31.github.io/family-teamwork-app
-# and is set in the Supabase dashboard, NOT from this file.
 #
-# Do not "fix" that by running `supabase config push`. This file is a
-# local development config, and pushing it carries a dozen unrelated
-# settings with it: it would disable email confirmations, drop the email
-# rate limit from a minute to a second, shorten OTPs from 8 to 6 and turn
-# off MFA enrolment on the live project. Checked with `supabase config
-# diff --remote` on 2026-11-13 — 16 differences, most of them unwanted.
+# Never push THIS file with `supabase config push`. It is a local
+# development config, and pushing it whole carries a dozen unrelated
+# settings with it: measured with `supabase config diff --remote`, it
+# would disable email confirmations, drop the email rate limit from a
+# minute to a second, shorten OTPs from 8 to 6 and turn off MFA
+# enrolment on the live project.
+#
+# To change one hosted setting, write a MINIMAL config declaring only
+# that setting and push it from its own directory — undeclared
+# properties are left alone:
+#
+#   mkdir -p /tmp/cfg/supabase
+#   printf 'project_id = "family-teamwork-app"\n[auth]\nsite_url = "..."\n' \
+#     > /tmp/cfg/supabase/config.toml
+#   supabase config diff --remote=<ref> --workdir /tmp/cfg   # check first
+#   supabase config push --remote=<ref> --workdir /tmp/cfg --yes
+#
+# That is how site_url and additional_redirect_urls were set: 2 properties
+# pushed, 10 left unchanged.
 site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""

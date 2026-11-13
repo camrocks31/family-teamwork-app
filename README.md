@@ -128,10 +128,25 @@ in your local `.env.local` and in Edge Function secrets, nowhere else.
 
 **2. Pages source** — Settings → Pages → Source: **GitHub Actions**.
 
-**2a. Supabase auth settings**, in the dashboard. These are deliberately *not*
-in `supabase/config.toml`: that file configures the local development stack,
-and `supabase config push` would carry a dozen unrelated settings into
-production with it.
+**2a. Supabase auth settings.** These are deliberately *not* taken from
+`supabase/config.toml`: that file configures the local development stack, and
+pushing it whole would carry a dozen unrelated settings into production —
+measured, it would disable email confirmations, drop the email rate limit from
+a minute to a second, shorten OTPs and turn off MFA enrolment.
+
+Set them in the dashboard, or push a **minimal** config that declares only
+what you mean to change (undeclared properties are left alone):
+
+```bash
+mkdir -p /tmp/cfg/supabase && cat > /tmp/cfg/supabase/config.toml <<'EOF'
+project_id = "family-teamwork-app"
+[auth]
+site_url = "https://<user>.github.io/<repo>"
+additional_redirect_urls = ["https://<user>.github.io/<repo>/**"]
+EOF
+npx supabase config diff --remote=<ref> --workdir /tmp/cfg
+npx supabase config push --remote=<ref> --workdir /tmp/cfg --yes
+```
 
 | Setting | Value | Why |
 | --- | --- | --- |
