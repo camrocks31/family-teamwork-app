@@ -55,9 +55,11 @@ jobs:
       - name: Build (static export)
         run: npm run build
 
-      - name: The build must reject server code
-        # Proves output:'export' is really guarding the repository, so nothing
-        # that needs a server can ship to GitHub Pages unnoticed.
+      - name: No server-only code in a static export
+        # A source scan, deliberately not a build check: measured on 2026-11-13,
+        # `output: "export"` does NOT fail the build on route handlers,
+        # cookies() or server actions. They would deploy to GitHub Pages and
+        # silently do nothing. See the comment in the script.
         run: node scripts/check-static-export.mjs
 
       - name: Unit and integration tests
