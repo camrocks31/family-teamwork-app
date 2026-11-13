@@ -96,6 +96,15 @@ test.beforeAll(async () => {
       completed_at: null,
       submitted_by: null,
       submitted_at: null,
+      // The not-applicable columns have to be cleared too. A row left
+      // "pending" with an exemption reason still attached violates the check
+      // that those fields exist only while the task is not applicable — which
+      // is the constraint doing exactly its job on a careless fixture.
+      not_applicable_reason: null,
+      not_applicable_by: null,
+      not_applicable_at: null,
+      exemption_note: null,
+      correction_note: null,
     })
     .eq("occurrence_date", today);
   if (resetError) throw new Error(`fixture reset failed: ${resetError.message}`);

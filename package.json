@@ -18,7 +18,8 @@
     "db:seed:local": "node scripts/seed-local.mjs",
     "db:down": "node scripts/migrate-down.mjs",
     "bootstrap:parent": "node scripts/bootstrap-parent.mjs",
-    "check": "npm run lint && npm run typecheck && npm run build && npm run test"
+    "check": "npm run lint && npm run typecheck && npm run build && npm run test",
+    "verify": "bash scripts/verify.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
