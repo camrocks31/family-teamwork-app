@@ -17,6 +17,7 @@
     "db:reset": "supabase db reset",
     "db:seed:local": "node scripts/seed-local.mjs",
     "db:down": "node scripts/migrate-down.mjs",
+    "check:bundle": "node scripts/check-bundle-secrets.mjs out",
     "bootstrap:parent": "node scripts/bootstrap-parent.mjs",
     "check": "npm run lint && npm run typecheck && npm run build && npm run test",
     "verify": "bash scripts/verify.sh"

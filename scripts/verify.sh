@@ -25,6 +25,10 @@ step "lint";                 npm run lint      >/dev/null 2>&1 || fail "lint"; o
 step "typecheck";            npm run typecheck >/dev/null 2>&1 || fail "typecheck"; ok
 step "build (static export)";npm run build     >/dev/null 2>&1 || fail "build"; ok
 step "no server-only code";  node scripts/check-static-export.mjs >/dev/null 2>&1 || fail "export guard"; ok
+# The bundle check wants to know which anon key to expect, so it reads the
+# same .env.local the build just used.
+[ -f .env.local ] || fail ".env.local is missing — copy .env.local.example"
+step "no secrets in bundle"; ( set -a; . ./.env.local; set +a; node scripts/check-bundle-secrets.mjs out ) >/dev/null 2>&1 || fail "bundle secrets"; ok
 step "database tests";       npm test          >/dev/null 2>&1 || fail "database tests"; ok
 step "browser tests";        npm run test:e2e  >/dev/null 2>&1 || fail "browser tests"; ok
 

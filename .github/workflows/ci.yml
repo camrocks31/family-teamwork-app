@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets a deploy be re-run without a new commit — a rebuild after the
+  # Supabase keys change, for instance.
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 # HAL-1539 AC13. Every required check from HAL-1538 §3 runs here and a failure
 # fails the run. Nothing is allowed to turn a red check green: no
@@ -62,6 +68,12 @@ jobs:
         # silently do nothing. See the comment in the script.
         run: node scripts/check-static-export.mjs
 
+      - name: No secret keys in the built bundle
+        # Runs on every push and pull request, not only at deploy time: the
+        # cheapest moment to catch a NEXT_PUBLIC_ variable holding a secret is
+        # before it is ever merged.
+        run: node scripts/check-bundle-secrets.mjs out
+
       - name: Unit and integration tests
         run: npm test
 
@@ -80,3 +92,123 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # HAL-1545. Publish the static export to GitHub Pages.
+  #
+  # `needs: check` is the whole safety argument for AC6: this job cannot start
+  # unless every check in the same run, on the same commit, succeeded. That is
+  # a stronger guarantee than watching another workflow's conclusion, where
+  # the deploy would check out whatever the branch tip happens to be by then.
+  deploy:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      pages: write      # publish the artifact
+      id-token: write   # prove to Pages that it came from this workflow
+      actions: read     # deploy-pages@v4+ reads the artifact by id; without
+                        # this the deploy fails. Stated in its v4 release notes.
+
+    # One deploy at a time, and never cancel one half-done: an interrupted
+    # Pages deployment can leave the site serving a mixture of two builds.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check the deployment is configured
+        # Fail here, loudly, rather than publishing a site that loads and then
+        # cannot reach a backend. Both values are PUBLIC by design — they ship
+        # inside the bundle — so they are repository variables, not secrets.
+        # Making them secrets would also mask them in the logs of the very
+        # check that looks for them in the output.
+        run: |
+          missing=0
+          for name in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Repository variable $name is not set."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Set them under Settings -> Secrets and variables -> Actions -> Variables."
+            exit 1
+          fi
+          echo "Supabase URL: $NEXT_PUBLIC_SUPABASE_URL"
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Build the static export for Pages
+        # A project site is served from /<repo>/, so the base path has to be
+        # baked in at build time. The `check` job builds WITHOUT it, at the
+        # root, which is what the tests run against; this is a second,
+        # separate build for the deployed location.
+        run: npm run build
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ vars.PAGES_BASE_PATH || format('/{0}', github.event.repository.name) }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: No secret keys in what we are about to publish
+        # AC4. This is the last point at which a leaked service-role key can
+        # still be stopped; after the next step it is public and must be
+        # rotated rather than removed.
+        run: node scripts/check-bundle-secrets.mjs out
+        env:
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      # Versions below are the current majors, checked against the actions'
+      # own releases on 2026-11-13 rather than from memory — the first draft of
+      # this job was a whole major behind on all three.
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: out
+          # From v4 this action EXCLUDES dotfiles, which would quietly drop
+          # .nojekyll. Pages' artifact deployment does not run Jekyll, so it
+          # should not matter — but if it ever did, Jekyll ignores underscore
+          # directories and `_next/` is the entire application. Cheap insurance
+          # against a failure that would be total and baffling.
+          include-hidden-files: true
+
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+      - name: The published site answers
+        # A deployment that reports success and serves a 404 is a thing that
+        # happens; ask the site itself.
+        run: |
+          url="${{ steps.deployment.outputs.page_url }}"
+          echo "Checking $url"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/page.html -w '%{http_code}' -L "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "HTTP $code"
+              grep -q 'Our Family Hub' /tmp/page.html \
+                || { echo "::error::200, but the page is not Our Family Hub."; exit 1; }
+              echo "The sign-in page is live."
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code — Pages may still be propagating"
+            sleep 15
+          done
+          echo "::error::$url did not return 200."
+          exit 1

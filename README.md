@@ -85,6 +85,80 @@ every invariant they check is a database constraint — a mock would prove
 nothing. The end-to-end tests run against the built static export rather than
 the dev server, because that is the artifact that gets deployed.
 
+## Deployment
+
+The site is a static export on **GitHub Pages**, and the backend is a hosted
+**Supabase** project. There is nothing else to pay for and nothing to keep
+running.
+
+Live at **https://camrocks31.github.io/family-teamwork-app/**
+
+### How a deploy happens
+
+Every push to `main` runs the full check suite. The deploy job declares
+`needs: check`, so it cannot start unless every check on that same commit
+passed — a red build never publishes. It then builds a *second* time with the
+base path set (a project site is served from `/<repo>/`, not from the root),
+scans the output for leaked keys, and uploads it to Pages. The last step asks
+the published URL for itself, because a deployment can report success and
+still serve a 404.
+
+Re-deploy without a new commit from the Actions tab: run the **CI** workflow
+by hand.
+
+### One-time setup
+
+**1. Repository variables** — Settings → Secrets and variables → Actions →
+*Variables*. Both are public by design: they ship inside the bundle that
+anyone can read from the published site.
+
+| Variable | Value |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | your project URL, e.g. `https://abcdef.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the project's anon / publishable key |
+| `PAGES_BASE_PATH` | optional; defaults to `/<repo-name>`, which is right for a project site |
+
+They are *variables*, not secrets, for two reasons: they are published either
+way, and GitHub masks secrets in logs — which would blind the very check that
+looks for them in the build output.
+
+The **service-role key must never** be a repository variable or a
+`NEXT_PUBLIC_` anything. It bypasses row level security completely. It belongs
+in your local `.env.local` and in Edge Function secrets, nowhere else.
+
+**2. Pages source** — Settings → Pages → Source: **GitHub Actions**.
+
+**3. Push the schema** to the hosted project:
+
+```bash
+npx supabase login                       # or export SUPABASE_ACCESS_TOKEN
+npx supabase link --project-ref <ref>    # the subdomain of your project URL
+npx supabase db push                     # applies every migration in order
+```
+
+**4. Seed it, and create the first account.** The committed seed is
+placeholders only — never household data, because this repository is public:
+
+```bash
+psql "$DATABASE_URL" -f supabase/seed.sql
+psql "$DATABASE_URL" -f supabase/seed.local.sql      # your real names, gitignored
+
+BOOTSTRAP_ALLOW_REMOTE=yes npm run bootstrap:parent -- --member "Parent One"
+```
+
+`bootstrap-parent` refuses to run against anything but a local stack unless
+`BOOTSTRAP_ALLOW_REMOTE=yes` is set, because it holds the service-role key and
+a stray `.env` should not be able to reach a real household.
+
+### If something is wrong
+
+| Symptom | Cause |
+| --- | --- |
+| Deploy fails: "Repository variable … is not set" | step 1 above, not yet done |
+| Site loads, sign-in does nothing | the anon key did not reach the build; the bundle check should have caught it |
+| Styles and scripts 404 | base path mismatch — `PAGES_BASE_PATH` must match the repo name |
+| Signs in, then shows no household | the member row is not linked to your account, or the schema was never pushed |
+
 ## Design decisions worth knowing
 
 - **Readiness is derived, never stored.** Whether an activity is available is
