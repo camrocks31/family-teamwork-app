@@ -47,12 +47,10 @@ function decodeJwtPayload(token) {
 }
 
 async function* walk(dir) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
+  // A swallowed readdir error meant an unreadable directory was silently
+  // treated as empty, so a secret inside it would be published unexamined.
+  // A check that cannot see something must say so, not assume the best.
+  const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) yield* walk(full);
@@ -60,9 +58,32 @@ async function* walk(dir) {
   }
 }
 
-// Only text the browser is served. A font or image cannot carry a key in a
-// form that matters, and binary noise produces false positives.
-const TEXT = /\.(html|js|mjs|cjs|css|json|txt|map|webmanifest|xml)$/i;
+/**
+ * Undo the escapes a bundler may apply, so a key split by `\u002e` or `\/`
+ * is still recognised. The browser reconstructs the original string, so a
+ * scanner that only reads raw bytes can be evaded by ordinary minification —
+ * let alone deliberately.
+ */
+function normalize(source) {
+  return source
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\\//g, "/")
+    .replace(/\\n|\\r|\\t/g, "")
+    // Any backslash still sitting inside what would otherwise be a token.
+    .replace(/\\+/g, "");
+}
+
+// Everything that is published gets scanned, except file types that cannot
+// carry a readable key.
+//
+// This used to be an ALLOWLIST of ten text extensions, which meant anything
+// else was uploaded unread — and `out/` already contains SVGs copied verbatim
+// from `public/`, so the unscanned surface was not hypothetical. Independent
+// review planted a real service-role key in `out/_probe.svg` and in an
+// extensionless `out/env`; both passed. A denylist of binary formats fails
+// safe: an unfamiliar extension is scanned rather than skipped.
+const BINARY = /\.(woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|ico|icns|bmp|tiff?|mp[34]|m4[av]|webm|ogg|wav|mov|pdf|zip|gz|br|wasm)$/i;
+const isScannable = (file) => !BINARY.test(file);
 
 const findings = [];
 let filesScanned = 0;
@@ -70,10 +91,11 @@ let anonTokensFound = 0;
 let publishableFound = 0;
 
 for await (const file of walk(root)) {
-  if (!TEXT.test(file)) continue;
+  if (!isScannable(file)) continue;
   filesScanned += 1;
   const rel = path.relative(root, file);
-  const source = await readFile(file, "utf8");
+  const raw = await readFile(file, "utf8");
+  const source = raw + "\n" + normalize(raw);
 
   for (const token of source.match(JWT) ?? []) {
     const claims = decodeJwtPayload(token);
@@ -111,12 +133,35 @@ if (filesScanned === 0) {
 }
 
 // The build's own key must actually be in what it produced.
+//
+// This used to be optional: with the variable unset, ANY token whose role was
+// `anon` satisfied it — a different project's key, a stale one, or a committed
+// example. "Some public-looking string is present" is not a check. The
+// expected value is now required, and it must itself look like a public key,
+// so `NEXT_PUBLIC_SUPABASE_ANON_KEY=not-a-key` cannot pass by being echoed
+// back out of the bundle.
 const expected = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-if (expected) {
+if (!expected) {
+  findings.push(
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY is not set, so this check cannot tell\n" +
+      "    which key the build received, or whether it received one at all.",
+  );
+} else {
+  const claims = decodeJwtPayload(expected);
+  const looksPublic =
+    /^sb_publishable_/.test(expected) || (claims && claims.role === "anon");
+  if (!looksPublic) {
+    findings.push(
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY is not a Supabase public key.\n" +
+        "    It must be the anon key (role \"anon\") or an sb_publishable_ key.",
+    );
+  }
+
   let present = false;
   for await (const file of walk(root)) {
-    if (!TEXT.test(file)) continue;
-    if ((await readFile(file, "utf8")).includes(expected)) {
+    if (!isScannable(file)) continue;
+    const raw = await readFile(file, "utf8");
+    if (raw.includes(expected) || normalize(raw).includes(expected)) {
       present = true;
       break;
     }
@@ -127,18 +172,30 @@ if (expected) {
         "    The site would load and then be unable to reach Supabase at all.",
     );
   }
-} else if (anonTokensFound === 0 && publishableFound === 0) {
-  findings.push(
-    "no Supabase public key is present and none was configured.\n" +
-      "    This build cannot talk to a backend. Set " +
-      "NEXT_PUBLIC_SUPABASE_ANON_KEY before building for deployment.",
-  );
 }
 
-if (findings.length > 0) {
+// A secret key we were handed must not appear, in any form.
+const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (secret) {
+  for await (const file of walk(root)) {
+    if (!isScannable(file)) continue;
+    const raw = await readFile(file, "utf8");
+    if (raw.includes(secret) || normalize(raw).includes(secret)) {
+      findings.push(
+        `${path.relative(root, file)}\n    contains the SERVICE-ROLE key verbatim.`,
+      );
+    }
+  }
+}
+
+// Raw and normalized text are both scanned, so one planted key can be
+// reported twice. Say each thing once.
+const unique = [...new Set(findings)];
+
+if (unique.length > 0) {
   console.error(
     `Bundle check FAILED for ${root}\n\n` +
-      findings.map((f) => `  ${f}`).join("\n\n") +
+      unique.map((f) => `  ${f}`).join("\n\n") +
       "\n\nThis directory is published to a public URL. Treat anything found " +
       "here\nas already disclosed: rotate the key, do not merely remove it.\n",
   );

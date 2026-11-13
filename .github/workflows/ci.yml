@@ -106,6 +106,9 @@ jobs:
     timeout-minutes: 15
 
     permissions:
+      contents: read    # actions/checkout. A job-level permissions block
+                        # REPLACES the workflow-level one rather than adding
+                        # to it, so omitting this left the scope at `none`.
       pages: write      # publish the artifact
       id-token: write   # prove to Pages that it came from this workflow
       actions: read     # deploy-pages@v4+ reads the artifact by id; without

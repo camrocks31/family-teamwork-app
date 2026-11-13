@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
-import { makePool, withRollback } from "./helpers";
+import { makePool } from "./helpers";
 
 /**
  * HAL-1545 acceptance criterion 7 — the grant layer, not just row level
@@ -61,7 +61,10 @@ async function executableBy(role: string): Promise<string[]> {
        from pg_proc p
        join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public'
-        and p.prokind = 'f'
+        -- Procedures and aggregates too. Filtering to 'f' alone left a hole
+        -- in the guard: a procedure created later would be executable by
+        -- PUBLIC and this test would not have noticed.
+        and p.prokind in ('f', 'p', 'a')
         and has_function_privilege($1, p.oid, 'EXECUTE')
       order by 1`,
     [role],
@@ -123,23 +126,23 @@ describe("function grants", () => {
     // The invariant that actually holds, and the one that catches a function
     // added without a decision about it.
     //
-    // It is NOT enforced by default privileges, and the first version of this
-    // test wrongly assumed it could be. Measured on PostgreSQL 17.11:
-    // `alter default privileges ... revoke execute on functions from public`
-    // is silently discarded — not even stored — so every newly created
-    // function carries `=X/owner` and is reachable by anon until explicitly
-    // revoked. An event trigger could close that, but creating one needs
-    // superuser, which the migration role on a hosted project is not.
+    // Two things enforce it, and it is worth knowing which does what.
     //
-    // So this test is the enforcement. A new function added by a later
-    // migration fails here until someone revokes it and decides, in writing,
-    // who may call it.
+    // 20261114030100_private_by_default.sql revokes EXECUTE from PUBLIC in the
+    // role's GLOBAL default privileges, so a newly created function is private
+    // from the moment it exists. An earlier migration tried to do this scoped
+    // with `IN SCHEMA` and it silently did nothing — the measured difference
+    // between the two is written up in that migration.
+    //
+    // This test stays regardless, because a default is a safety net and the
+    // named list above is a decision. A function added later still has to be
+    // argued for here.
     const { rows } = await pool.query<{ proname: string; proacl: string | null }>(
       `select p.proname, p.proacl::text
          from pg_proc p
          join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'
-          and p.prokind = 'f'
+          and p.prokind in ('f', 'p', 'a')
           -- A null ACL means "built-in default", which for a function grants
           -- EXECUTE to PUBLIC. An explicit '=X/' entry says the same thing.
           and (p.proacl is null or array_to_string(p.proacl, ',') like '=X/%'

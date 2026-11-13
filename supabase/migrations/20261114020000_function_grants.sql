@@ -55,20 +55,19 @@
 -- 1. Stop Supabase's default privileges from granting the browser roles
 --    EXECUTE on every function added from here on.
 --
---    This removes `anon` and `authenticated`. It does NOT remove PUBLIC, and
---    it cannot: measured on PostgreSQL 17.11, `alter default privileges ...
---    revoke execute on functions from public` is silently discarded — the
---    revocation is not even recorded in pg_default_acl, and a function created
---    afterwards still carries `=X/owner`. An explicit `revoke ... from public`
---    after creation does work, which is what step 2 does.
+--    This removes `anon` and `authenticated`. It does not remove PUBLIC.
 --
---    An event trigger would close the gap, but creating one needs superuser
---    and the migration role on a hosted project is not one. So a function
---    added by a later migration WILL be executable by PUBLIC — and therefore
---    by anon — until it is revoked. The guard against that is
---    tests/db/grants.test.ts, which asserts the whole matrix by name and fails
---    the suite rather than letting the API widen unnoticed. That test is doing
---    real work; it is not decoration.
+--    CORRECTED BY 20261114030100_private_by_default.sql. This migration
+--    originally claimed that withholding PUBLIC was impossible — that
+--    PostgreSQL silently discards the revocation. That was wrong, and
+--    independent review caught it. The revocation is discarded when scoped
+--    with `IN SCHEMA`, as it is here; issued globally for the role it works,
+--    which is what the later migration does. Read that file for the measured
+--    behaviour.
+--
+--    Either way the exhaustive matrix in tests/db/grants.test.ts remains the
+--    thing that forces a decision about each new function, rather than
+--    leaving it to a default nobody looks at.
 do $$
 begin
   -- Bound to whichever role runs the migrations (postgres, locally and on a

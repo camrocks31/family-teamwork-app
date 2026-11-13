@@ -34,3 +34,19 @@ begin
   end loop;
 end
 $$;
+
+-- Restore the four denials that EXISTED BEFORE this migration. The loop above
+-- grants every function to everyone, which is broader than the state it is
+-- meant to return to: earlier migrations had already revoked these by name,
+-- and handing `app_consume_enrollment_code` or `app_apply_transition` to
+-- anonymous callers would be a hole this migration never opened. Found by
+-- independent review, which applied this file on its own and compared.
+revoke all on function
+  app_apply_transition(uuid, text, uuid, integer, text, text),
+  app_consume_enrollment_code(text, text, uuid)
+  from public, anon, authenticated;
+
+revoke all on function
+  verify_member_pin(uuid, text, uuid),
+  evaluate_household_dashboard(uuid, timestamp with time zone)
+  from public, anon;
