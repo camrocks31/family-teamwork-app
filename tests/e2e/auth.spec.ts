@@ -28,35 +28,46 @@ test.beforeAll(async () => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Link the e2e account to a seeded parent, idempotently, so the suite can be
-  // re-run without a db reset in between.
   const { data: member } = await admin
     .from("family_members")
-    .select("id, auth_user_id")
+    .select("id")
     .eq("display_name", "Parent Two")
     .single();
   if (!member) throw new Error("Seed is missing — run `npm run db:reset`.");
 
-  if (!member.auth_user_id) {
-    const { data: created, error } = await admin.auth.admin.createUser({
-      email: EMAIL,
-      password: PASSWORD,
-      email_confirm: true,
-    });
-    if (error && !/already/i.test(error.message)) throw error;
+  // Ensure the account exists, then link it UNCONDITIONALLY.
+  //
+  // This used to link only when the member had no account yet, which was
+  // wrong: the database suites run first in CI and link their own test
+  // accounts to the same seeded parents. The e2e then skipped its setup and
+  // signed in with credentials that no longer belonged to anyone, so the
+  // sign-in silently failed and the test looked like a broken dashboard.
+  // Whoever the member was linked to before, after this it is us.
+  const { data: created, error } = await admin.auth.admin.createUser({
+    email: EMAIL,
+    password: PASSWORD,
+    email_confirm: true,
+  });
+  if (error && !/already|registered|exists/i.test(error.message)) throw error;
 
-    let userId: string | undefined = created?.user?.id;
-    if (!userId) {
-      const { data: list } = await admin.auth.admin.listUsers();
-      userId = list.users.find((u) => u.email === EMAIL)?.id;
-    }
-    if (!userId) throw new Error("Could not create or find the e2e account.");
-
-    await admin
-      .from("family_members")
-      .update({ auth_user_id: userId })
-      .eq("id", member.id);
+  let userId: string | undefined = created?.user?.id;
+  if (!userId) {
+    const { data: list } = await admin.auth.admin.listUsers();
+    userId = list.users.find((u) => u.email === EMAIL)?.id;
   }
+  if (!userId) throw new Error("Could not create or find the e2e account.");
+
+  // auth_user_id is unique, so clear any other holder before claiming it.
+  await admin
+    .from("family_members")
+    .update({ auth_user_id: null })
+    .eq("auth_user_id", userId);
+
+  const { error: linkError } = await admin
+    .from("family_members")
+    .update({ auth_user_id: userId })
+    .eq("id", member.id);
+  if (linkError) throw linkError;
 });
 
 test("a parent signs in, stays signed in across a reload, and signs out", async ({
