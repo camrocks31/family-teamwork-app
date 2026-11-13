@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# HAL-1539 AC13. Every required check from HAL-1538 §3 runs here and a failure
+# fails the run. Nothing is allowed to turn a red check green: no
+# continue-on-error, no `|| true`.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start the local Supabase stack
+        # The integration tests run against the real engine, because every
+        # invariant they check is a database constraint. A mock would prove
+        # nothing.
+        run: npx supabase start
+
+      - name: Export Supabase connection details
+        run: |
+          npx supabase status -o json > /tmp/supabase.json
+          echo "NEXT_PUBLIC_SUPABASE_URL=$(node -p "require('/tmp/supabase.json').API_URL")" >> "$GITHUB_ENV"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$(node -p "require('/tmp/supabase.json').ANON_KEY")" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$(node -p "require('/tmp/supabase.json').SERVICE_ROLE_KEY")" >> "$GITHUB_ENV"
+
+      - name: Apply migrations and the seed
+        run: npx supabase db reset
+
+      - name: Reverse migrations round-trip
+        # A reverse migration nobody runs is a claim, not a rollback.
+        run: |
+          npm run db:down
+          npx supabase db reset
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (static export)
+        run: npm run build
+
+      - name: The build must reject server code
+        # Proves output:'export' is really guarding the repository, so nothing
+        # that needs a server can ship to GitHub Pages unnoticed.
+        run: node scripts/check-static-export.mjs
+
+      - name: Unit and integration tests
+        run: npm test
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        # These run against the built static export, not a dev server — the
+        # artifact we actually deploy.
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

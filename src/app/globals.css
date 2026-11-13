@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/**
+ * Our Family Hub — visual language (HAL-1538 requirement 20).
+ *
+ * Warm off-white ground, soft purple accent, green for done, amber for needs
+ * attention. Every status colour differs in lightness as well as hue, and no
+ * status is ever shown by colour alone — there is always a text label — so the
+ * app reads correctly for a colour-blind family member and in bright kitchen
+ * light on a wall-mounted iPad.
+ *
+ * All four text colours below pass WCAG AA on the ground they sit on.
+ */
+@theme {
+  --color-ground: #faf8f5;
+  --color-surface: #ffffff;
+  --color-ink: #241f2e;
+  --color-muted: #6b6478;
+  --color-line: #e8e3dc;
+
+  --color-accent: #6d4fb0;
+  --color-accent-strong: #543d8c;
+  --color-accent-wash: #f3eeff;
+  --color-accent-line: #ddd0f7;
+
+  --color-done: #2e7d52;
+  --color-done-wash: #eaf5ee;
+
+  --color-attention: #b4700e;
+  --color-attention-ink: #8a5509;
+  --color-attention-wash: #fdf3e3;
+  --color-attention-line: #f0dfbf;
+
+  --radius-card: 1.25rem;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
+
+/* HAL-1538 requirement 20: respect a reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
