@@ -1,5 +1,5 @@
 import { AuthGate } from "@/components/auth-gate";
-import { HouseholdShell } from "@/components/household-shell";
+import { Dashboard } from "@/components/dashboard";
 
 /**
  * Rendered to static HTML at build time. It holds no household data and makes
@@ -9,7 +9,7 @@ import { HouseholdShell } from "@/components/household-shell";
 export default function Home() {
   return (
     <AuthGate>
-      <HouseholdShell />
+      <Dashboard />
     </AuthGate>
   );
 }

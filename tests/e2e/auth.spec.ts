@@ -77,24 +77,28 @@ test("a parent signs in, stays signed in across a reload, and signs out", async 
 
   // The gate shows sign-in, and no household data, before authentication.
   await expect(page.getByRole("heading", { name: "Our Family Hub" })).toBeVisible();
-  await expect(page.getByText("Example Household")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: /Good (morning|afternoon)/ })).toHaveCount(0);
 
   await page.getByLabel("Email").fill(EMAIL);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
 
-  // The guarded shell loads the household through RLS.
-  await expect(page.getByRole("heading", { name: "Example Household" })).toBeVisible();
-  await expect(page.getByText("Parent One")).toBeVisible();
+  // The dashboard loads the household through RLS.
+  await expect(
+    page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ }),
+  ).toBeVisible();
+  await expect(page.getByText("Parent One").first()).toBeVisible();
 
   // The session survives a reload: a static export has no server to hold it,
   // so this is really a check that the browser session persists.
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Example Household" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
-  await expect(page.getByText("Example Household")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: /Good (morning|afternoon)/ })).toHaveCount(0);
 });
 
 test("a wrong password does not reveal whether the account exists", async ({
