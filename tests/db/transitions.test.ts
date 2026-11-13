@@ -105,6 +105,30 @@ beforeAll(async () => {
   await asMember(parentOne.authId, (c) =>
     c.query("select ensure_day_materialized($1, $2)", [householdId, DAY]),
   );
+
+  // These tests consume pending tasks — they complete them, submit them, send
+  // them back. Without this the suite passes once after a database reset and
+  // then fails on the second run for want of a fresh instance, which looks
+  // like a real defect and is not one.
+  await pool.query(
+    `update task_instances
+        set state = 'pending', completed_by = null, completed_at = null,
+            submitted_by = null, submitted_at = null,
+            not_applicable_reason = null, not_applicable_by = null,
+            not_applicable_at = null, exemption_note = null, correction_note = null
+      where occurrence_date = $1`,
+    [DAY],
+  );
+  await pool.query(
+    `delete from task_events where task_instance_id in
+       (select id from task_instances where occurrence_date = $1)`,
+    [DAY],
+  );
+  await pool.query(
+    `delete from task_operations where task_instance_id in
+       (select id from task_instances where occurrence_date = $1)`,
+    [DAY],
+  );
 });
 
 afterAll(async () => {

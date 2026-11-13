@@ -37,7 +37,7 @@ async function moment(date: string, time: string): Promise<string> {
 
 async function readiness(memberId: string, activityId: string, at: string) {
   return asMember(pool, parent.authId, async (c) => {
-    const { rows } = await c.query<{ r: Record<string, never> }>(
+    const { rows } = await c.query<{ r: unknown }>(
       `select evaluate_activity_readiness($1, $2, $3, $4) as r`,
       [parent.householdId, memberId, activityId, at],
     );
@@ -150,6 +150,10 @@ beforeAll(async () => {
     await asMember(pool, parent.authId, (cl) =>
       cl.query(`select ensure_day_materialized($1, $2)`, [parent.householdId, day]),
     );
+    // Start from a clean day so the suite is repeatable without a database
+    // reset in between. One of these tests deletes an instance on purpose, so
+    // materializing again above is part of the cleanup too.
+    await resetDay(day);
   }
 });
 
