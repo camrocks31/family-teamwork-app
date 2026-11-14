@@ -255,3 +255,71 @@ test("a parent adds a room and a job, and the job appears for the family", async
   // The original wording still exists, which is the whole point.
   expect(revisions![0].title).toBe(job);
 });
+
+test("a reward a parent sets up shows up as progress on the child's screen", async ({
+  page,
+}) => {
+  // Rewards are counted from the jobs actually recorded, so the number a
+  // child sees and the work they did cannot drift apart. This walks it: a
+  // parent creates one, the child sees progress, does a job, and the number
+  // moves.
+  const reward = `Film night ${Date.now()}`;
+
+  const { error: resetError } = await admin
+    .from("task_instances")
+    .update({
+      state: "pending",
+      completed_by: null,
+      completed_at: null,
+      submitted_by: null,
+      submitted_at: null,
+      not_applicable_reason: null,
+      not_applicable_by: null,
+      not_applicable_at: null,
+      exemption_note: null,
+      correction_note: null,
+    })
+    .eq("occurrence_date", today);
+  if (resetError) throw new Error(`fixture reset failed: ${resetError.message}`);
+
+  await page.goto("/");
+  await page.getByLabel("Email").fill(EMAIL);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  // --- the parent sets one up ---
+  await page.getByRole("link", { name: "Settings" }).click();
+
+  // Each test gets its own browser, so this one knows nothing about the
+  // tablet the earlier test enrolled: the device id lives in localStorage.
+  // The PIN does live in the database, but setting it again keeps this test
+  // standalone.
+  await page.getByLabel("What should this tablet be called?").fill(`Reward iPad ${Date.now()}`);
+  await page.getByRole("button", { name: "Set up this tablet" }).click();
+  await expect(page.getByRole("main").getByRole("status")).toContainText(/set up/i);
+  await page.getByLabel("New PIN", { exact: false }).first().fill(PIN);
+  await page.getByRole("button", { name: "Set PIN" }).first().click();
+  await expect(page.getByRole("main").getByRole("status")).toContainText(/PIN is set/i);
+
+  await page.getByRole("button", { name: "Add a reward" }).click();
+  await page.getByLabel("What is the reward?").fill(reward);
+  await page.getByLabel("How many jobs?").fill("3");
+  await page.getByRole("button", { name: "Save reward" }).click();
+  await expect(page.getByRole("main").getByRole("status")).toContainText(/added/i);
+
+  // --- the child sees it ---
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(childName) }).click();
+  for (const d of PIN) await page.getByRole("button", { name: d, exact: true }).click();
+  await expect(page.getByText(`Hello, ${childName}`)).toBeVisible();
+
+  await page.getByRole("link", { name: "My jobs" }).click();
+  const bar = page.getByRole("progressbar", { name: new RegExp(reward) });
+  await expect(bar).toBeVisible();
+  await expect(bar).toHaveAttribute("aria-valuenow", "0");
+  await expect(bar).toHaveAttribute("aria-valuemax", "3");
+
+  // --- and doing a job moves it ---
+  await page.getByRole("button", { name: "Done" }).first().click();
+  await expect(bar).toHaveAttribute("aria-valuenow", "1", { timeout: 15_000 });
+});

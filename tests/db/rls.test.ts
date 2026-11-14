@@ -33,6 +33,7 @@ const EVERY_TABLE = [
   "requirement_group_items",
   "activity_requirements",
   "schedule_rules",
+  "rewards",
   "shopping_items",
   "calendar_events",
   "calendar_event_attendees",

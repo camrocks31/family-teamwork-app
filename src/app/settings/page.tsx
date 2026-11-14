@@ -7,6 +7,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { enrollThisDevice, forgetThisDevice, getDeviceId } from "@/lib/kiosk";
 import { SettingsRooms, type Space } from "@/components/settings-rooms";
 import { SettingsTasks } from "@/components/settings-tasks";
+import { SettingsRewards } from "@/components/settings-rewards";
 
 /**
  * Settings — the parent's side of the hub.
@@ -283,12 +284,21 @@ function Settings() {
         }}
       />
 
+      {householdId && (
+        <SettingsRewards
+          householdId={householdId}
+          members={members}
+          onError={setError}
+          onNote={setNote}
+        />
+      )}
+
       <section className="mt-10 rounded-[var(--radius-card)] border border-line bg-surface p-4">
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Not here yet
         </h2>
         <p className="mt-1 text-sm text-muted">
-          Rewards, Lucy&rsquo;s own page, shopping and the calendar.
+          Lucy&rsquo;s own page, shopping and the calendar.
         </p>
       </section>
 

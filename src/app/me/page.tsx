@@ -21,6 +21,17 @@ import { householdToday } from "@/lib/dashboard";
  * reason the kiosk identity exists.
  */
 
+interface RewardProgress {
+  id: string;
+  name: string;
+  icon: string | null;
+  period: "day" | "week";
+  threshold_count: number;
+  done: number;
+  earned: boolean;
+  still_needed: number;
+}
+
 interface MyTask {
   instance_id: string;
   title: string;
@@ -46,6 +57,7 @@ function MyJobs() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [rewards, setRewards] = useState<RewardProgress[]>([]);
 
   const load = useCallback(async (memberId: string) => {
     const supabase = getSupabaseClient();
@@ -95,6 +107,19 @@ function MyJobs() {
         .sort((a, b) => a.display_order - b.display_order)
         .map((c) => c.text),
     });
+
+    // Reward progress, counted from the work actually recorded. Fetched
+    // alongside the jobs so finishing one and watching the number move is a
+    // single refresh, not two.
+    const { data: household } = await supabase.from("households").select("id").maybeSingle();
+    if (household) {
+      const { data: progress, error: rewardError } = await supabase.rpc("evaluate_rewards", {
+        p_household_id: household.id,
+        p_member_id: memberId,
+      });
+      if (rewardError) throw new Error(rewardError.message);
+      setRewards((progress as RewardProgress[]) ?? []);
+    }
 
     const rows = (data as unknown as Row[]) ?? [];
     // Mine means mine. A shared job belongs to the house, and the difference
@@ -193,6 +218,53 @@ function MyJobs() {
         >
           {error}
         </p>
+      )}
+
+      {rewards.length > 0 && (
+        <section className="mt-8">
+          <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">
+            What you&rsquo;re working towards
+          </h2>
+          <ul className="mt-3 flex flex-col gap-3">
+            {rewards.map((r) => (
+              <li
+                key={r.id}
+                className={`rounded-[var(--radius-card)] border p-4 ${
+                  r.earned
+                    ? "border-[color:var(--color-done)]/30 bg-done-wash"
+                    : "border-line bg-surface"
+                }`}
+              >
+                <p className="font-[family-name:var(--font-display)] text-lg font-semibold">
+                  {r.icon && <span aria-hidden="true">{r.icon} </span>}
+                  {r.name}
+                </p>
+                <p className="text-sm text-muted">
+                  {r.earned
+                    ? "Earned!"
+                    : `${r.done} of ${r.threshold_count} ${
+                        r.period === "day" ? "today" : "this week"
+                      } — ${r.still_needed} to go`}
+                </p>
+                <div
+                  role="progressbar"
+                  aria-valuenow={r.done}
+                  aria-valuemin={0}
+                  aria-valuemax={r.threshold_count}
+                  aria-label={`${r.name} progress`}
+                  className="mt-2 h-3 w-full overflow-hidden rounded-full bg-ground"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent"
+                    style={{
+                      width: `${Math.min(100, (r.done / r.threshold_count) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <TaskList

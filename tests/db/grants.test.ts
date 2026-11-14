@@ -37,6 +37,7 @@ const AUTHENTICATED_MAY_EXECUTE = [
   "ensure_day_materialized",
   "evaluate_activity_readiness",
   "evaluate_household_dashboard",
+  "evaluate_rewards",
   "evaluate_space_status",
   "exempt_task_instance",
   "list_devices",
