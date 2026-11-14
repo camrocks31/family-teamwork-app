@@ -169,7 +169,13 @@ test("a blocker links through to the room it names", async ({ page }) => {
   if (/\/house\//.test(page.url())) {
     const room = blockerText.replace(/ needs attention\.?/i, "").trim();
     await expect(page.getByRole("heading", { name: room })).toBeVisible();
-    await expect(page.getByRole("listitem").first()).toBeVisible();
+
+    // Real tasks with real criteria, not the empty state. The previous
+    // version asserted only that SOME list item was visible, which is just as
+    // true of "Nothing needed here today." — and it was, for the whole time
+    // the room query was failing with PGRST201 and rendering nothing.
+    await expect(page.getByText("Nothing needed here today.")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Mark done" }).first()).toBeVisible();
   }
 });
 
@@ -296,4 +302,54 @@ test("each activity tile says whose it is", async ({ page }) => {
       `${child.display_name} should be named on their own tile`,
     ).toBeVisible();
   }
+});
+
+test("a task can actually be ticked off, and the house notices", async ({ page }) => {
+  // Until this existed the app had no interactive controls at all: the only
+  // clickable things in it were sign-in and forgot-password. Every transition
+  // helper in src/lib/tasks.ts was written, tested at the database level, and
+  // called by nothing.
+  await signIn(page);
+
+  // A room that genuinely has work in it today.
+  const { data: room } = await admin
+    .from("task_instances")
+    .select(
+      "task_definitions!task_instances_definition_id_fkey!inner ( location_space_id )",
+    )
+    .eq("occurrence_date", today)
+    .eq("state", "pending")
+    .not("task_definitions.location_space_id", "is", null)
+    .limit(1)
+    .single();
+  const spaceId = (room as unknown as { task_definitions: { location_space_id: string } })
+    .task_definitions.location_space_id;
+
+  await page.goto(`/house/?space=${spaceId}`);
+
+  // Count pending across the household, not inside the room. Scoping the
+  // count to one space meant relying on the same embedded filter the page
+  // uses, which is the thing under test — so a miscounted room looked like a
+  // broken button.
+  const pendingToday = async () => {
+    const { count } = await admin
+      .from("task_instances")
+      .select("id", { count: "exact", head: true })
+      .eq("occurrence_date", today)
+      .eq("state", "pending");
+    return count ?? -1;
+  };
+  const before = await pendingToday();
+  expect(before, "there should be something pending to tick off").toBeGreaterThan(0);
+
+  const markDone = page.getByRole("button", { name: "Mark done" }).first();
+  await expect(markDone).toBeVisible();
+  await markDone.click();
+
+  // The page says so without a reload…
+  await expect(page.getByText("Done").first()).toBeVisible({ timeout: 15_000 });
+
+  // …and one task really moved out of pending. Propagation to the dashboard
+  // is already covered by "the house updates by itself".
+  await expect.poll(pendingToday, { timeout: 15_000 }).toBe(before - 1);
 });

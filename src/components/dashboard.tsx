@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { WhoAmI } from "@/components/who-am-i";
+import type { Actor } from "@/lib/kiosk";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import {
   useDashboard,
@@ -77,6 +79,9 @@ export function Dashboard() {
   const { data, error, loading } = useDashboard(
     household.status === "found" ? household.id : null,
   );
+  // Who is at the iPad. Held here only to decide what to offer them; every
+  // action they take is re-checked in the database against the same token.
+  const [actor, setActor] = useState<Actor | null>(null);
 
   if (household.status === "none") {
     return (
@@ -118,6 +123,29 @@ export function Dashboard() {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       <Header data={data} />
+
+      {/* Who is standing here. On a wall-mounted iPad this is the first
+          question the hub has to answer, and the only one a seven-year-old
+          can answer without an account. */}
+      <div className="mt-6">
+        <WhoAmI people={data.members} onChange={setActor} />
+        <div className="mt-3 flex flex-wrap gap-3">
+          {actor && (
+            <Link
+              href="/me/"
+              className="inline-flex min-h-[48px] items-center rounded-2xl bg-accent px-5 font-[family-name:var(--font-display)] text-base font-semibold text-white"
+            >
+              My jobs
+            </Link>
+          )}
+          <Link
+            href="/settings/"
+            className="inline-flex min-h-[48px] items-center rounded-2xl border border-line px-5 font-[family-name:var(--font-display)] text-base font-semibold"
+          >
+            Settings
+          </Link>
+        </div>
+      </div>
 
       <section aria-label="Family" className="mt-6">
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

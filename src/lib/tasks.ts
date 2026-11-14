@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { getActor } from "./kiosk";
 
 /**
  * Typed wrappers over the task functions.
@@ -56,8 +57,15 @@ async function callTransition(
   fn: string,
   args: Record<string, unknown>,
 ): Promise<TransitionResult> {
+  // Whoever is standing at the iPad is attributed with the work, so a child's
+  // tap is recorded as theirs rather than as the parent whose session happens
+  // to be open on the kitchen tablet. The token is passed, never trusted: the
+  // database re-checks the session, the device and the household on every
+  // call, and an actor token never carries parent authority.
+  const actor = getActor();
   const { data, error } = await getSupabaseClient().rpc(fn, {
     p_operation_id: crypto.randomUUID(),
+    p_actor_token: actor?.token ?? null,
     ...args,
   });
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { evaluateSpaceStatus, type SpaceResult, type SpaceStatus } from "@/lib/readiness";
+import { TaskConflictError, tasks as taskApi } from "@/lib/tasks";
 
 /**
  * One room, and exactly what is left in it.
@@ -22,6 +23,8 @@ interface RoomTask {
   satisfaction: string;
   correction_note: string | null;
   criteria: string[];
+  /** Carried so a transition can refuse a stale write rather than clobber it. */
+  version: number;
 }
 
 const LABEL: Record<SpaceStatus, string> = {
@@ -36,6 +39,33 @@ export function RoomView() {
   const [status, setStatus] = useState<SpaceResult | null>(null);
   const [tasks, setTasks] = useState<RoomTask[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  /**
+   * Do the thing, then let realtime bring the truth back.
+   *
+   * No optimistic update: the database decides whether a transition is legal,
+   * and the one failure worth designing for is two people tapping the same
+   * task at once. The version goes with the request so the loser is told
+   * plainly rather than quietly overwriting the winner.
+   */
+  async function act(task: RoomTask, run: () => Promise<unknown>) {
+    setBusyId(task.instance_id);
+    setError(null);
+    try {
+      await run();
+    } catch (e) {
+      setError(
+        e instanceof TaskConflictError
+          ? "Somebody else just changed this one. It has been refreshed."
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   useEffect(() => {
     if (!spaceId) return;
@@ -43,14 +73,28 @@ export function RoomView() {
 
     const load = async () => {
       try {
+/*
+         * The foreign keys are named explicitly, and they have to be.
+         *
+         * task_instances reaches task_definitions by THREE constraints — the plain
+         * one plus the composite pairs that keep the denormalised household_id and
+         * occurrence_mode honest — so PostgREST refuses to guess and answers
+         * PGRST201. The page then caught the error, rendered no tasks, and looked
+         * like a room with nothing to do in it. The room view shipped that way and
+         * its test passed, because "a list item is visible" is also true of the
+         * empty state.
+         */
         setStatus(await evaluateSpaceStatus(spaceId));
 
         const { data, error: taskError } = await supabase
           .from("task_instances")
           .select(
-            `id, state, correction_note,
-             task_definitions!inner ( location_space_id ),
-             task_definition_revisions!inner ( title, task_definition_criteria ( text, display_order ) )`,
+            `id, state, version, correction_note,
+             task_definitions!task_instances_definition_id_fkey!inner ( location_space_id ),
+             task_definition_revisions!task_instances_definition_revision_id_fkey!inner (
+               title,
+               task_definition_criteria!task_definition_criteria_revision_id_fkey ( text, display_order )
+             )`,
           )
           .eq("task_definitions.location_space_id", spaceId)
           .order("id");
@@ -59,6 +103,7 @@ export function RoomView() {
         type Row = {
           id: string;
           state: string;
+          version: number;
           correction_note: string | null;
           task_definition_revisions: {
             title: string;
@@ -71,6 +116,7 @@ export function RoomView() {
             title: r.task_definition_revisions.title,
             state: r.state,
             satisfaction: r.state,
+            version: r.version,
             correction_note: r.correction_note,
             criteria: [...r.task_definition_revisions.task_definition_criteria]
               .sort((a, b) => a.display_order - b.display_order)
@@ -164,6 +210,12 @@ export function RoomView() {
                 </li>
               ))}
             </ul>
+
+            <TaskActions
+              task={t}
+              busy={busyId === t.instance_id}
+              onAct={(run) => void act(t, run)}
+            />
           </li>
         ))}
         {tasks.length === 0 && !error && (
@@ -171,5 +223,111 @@ export function RoomView() {
         )}
       </ul>
     </main>
+  );
+}
+
+/**
+ * What you can do to this task, right now.
+ *
+ * Only the moves the task's current state actually allows are offered — the
+ * database refuses the rest anyway, and a button that exists to produce an
+ * error is a worse answer than no button. The version travels with every
+ * request so a second person tapping the same task is told, not ignored.
+ */
+function TaskActions({
+  task,
+  busy,
+  onAct,
+}: {
+  task: RoomTask;
+  busy: boolean;
+  onAct: (run: () => Promise<unknown>) => void;
+}) {
+  const primary = "min-h-[48px] flex-1 rounded-2xl bg-accent px-4 font-[family-name:var(--font-display)] text-base font-semibold text-white disabled:opacity-60";
+  const secondary = "min-h-[48px] rounded-2xl border border-line bg-ground px-4 text-base font-semibold text-ink disabled:opacity-60";
+
+  if (task.state === "not_applicable") {
+    return <p className="mt-4 text-sm font-semibold text-muted">Not needed today.</p>;
+  }
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {(task.state === "pending" ||
+        task.state === "in_progress" ||
+        task.state === "needs_attention") && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onAct(() => taskApi.complete(task.instance_id, task.version))}
+          className={primary}
+        >
+          {busy ? "Saving…" : "Mark done"}
+        </button>
+      )}
+
+      {task.state === "submitted" && (
+        <>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onAct(() => taskApi.approve(task.instance_id, task.version))}
+            className={primary}
+          >
+            {busy ? "Saving…" : "Looks good"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              onAct(() =>
+                taskApi.returnForCorrection(
+                  task.instance_id,
+                  "Please have another go.",
+                  task.version,
+                ),
+              )
+            }
+            className={secondary}
+          >
+            Send back
+          </button>
+        </>
+      )}
+
+      {task.state === "completed" && (
+        <>
+          <p className="flex min-h-[48px] flex-1 items-center font-semibold text-[color:var(--color-done)]">
+            Done
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              onAct(() =>
+                taskApi.returnForCorrection(
+                  task.instance_id,
+                  "Please have another go.",
+                  task.version,
+                ),
+              )
+            }
+            className={secondary}
+          >
+            Send back
+          </button>
+        </>
+      )}
+
+      {task.state !== "completed" && task.state !== "submitted" && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onAct(() => taskApi.markNotNeeded(task.instance_id, task.version))}
+          className={secondary}
+        >
+          Not needed
+        </button>
+      )}
+    </div>
   );
 }
