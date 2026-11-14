@@ -30,6 +30,7 @@ const AUTHENTICATED_MAY_EXECUTE = [
   // the caller's own session, so there is nothing to leak.
   "app_current_household_id",
   "app_is_parent",
+  "app_today_is_school_day",
   "approve_task_instance",
   "complete_task_instance",
   "create_device_enrollment_code",
@@ -41,6 +42,7 @@ const AUTHENTICATED_MAY_EXECUTE = [
   "evaluate_space_status",
   "exempt_task_instance",
   "list_devices",
+  "list_my_jobs",
   "mark_task_not_needed",
   "return_task_instance",
   "revoke_device",

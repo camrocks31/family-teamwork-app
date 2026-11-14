@@ -214,6 +214,17 @@ export function Dashboard() {
 }
 
 function Header({ data }: { data: DashboardPayload }) {
+  // app_in_morning_window is a CLOCK WINDOW and nothing else — it never asks
+  // whether today is a school day, and this banner called it a "School
+  // morning" regardless. At 07:17 on a Saturday it said so, above a list of
+  // school jobs that did not apply. The engine knew; nothing asked it.
+  const [schoolDay, setSchoolDay] = useState(false);
+  useEffect(() => {
+    void getSupabaseClient()
+      .rpc("app_today_is_school_day")
+      .then(({ data: isSchoolDay }) => setSchoolDay(Boolean(isSchoolDay)));
+  }, [data.local_date]);
+
   const pretty = new Date(`${data.local_date}T12:00:00`).toLocaleDateString(undefined, {
     weekday: "long",
     day: "numeric",
@@ -228,7 +239,7 @@ function Header({ data }: { data: DashboardPayload }) {
         <p className="mt-1 text-base text-muted">{pretty}</p>
       </div>
       <div className="flex items-center gap-3">
-        {data.in_morning_window && (
+        {data.in_morning_window && schoolDay && (
           <p className="flex items-center gap-2.5 rounded-full border border-attention-line bg-attention-wash px-4 py-2">
             <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-attention)]" />
             <span className="text-sm font-semibold text-attention-ink">

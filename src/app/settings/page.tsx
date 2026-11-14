@@ -298,7 +298,10 @@ function Settings() {
           Not here yet
         </h2>
         <p className="mt-1 text-sm text-muted">
-          Lucy&rsquo;s own page, shopping and the calendar.
+          Choosing what each activity requires — which rooms and jobs have
+          to be done before Play Video Games or Watch TV is allowed. That
+          is still set in the database, not here. Also shopping and the
+          calendar.
         </p>
       </section>
 

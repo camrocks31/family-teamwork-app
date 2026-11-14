@@ -6,7 +6,6 @@ import { AuthGate } from "@/components/auth-gate";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getActor, type Actor } from "@/lib/kiosk";
 import { TaskConflictError, tasks as taskApi } from "@/lib/tasks";
-import { householdToday } from "@/lib/dashboard";
 
 /**
  * My jobs — what this child has to do today, and a button to say it is done.
@@ -61,51 +60,41 @@ function MyJobs() {
 
   const load = useCallback(async (memberId: string) => {
     const supabase = getSupabaseClient();
-    const { data, error: loadError } = await supabase
-      .from("task_instances")
-      // Every foreign key is named: task_instances reaches task_definitions
-      // by three constraints and task_definition_revisions by two, so an
-      // unqualified embed is ambiguous and PostgREST answers PGRST201.
-      .select(
-        `id, state, version, correction_note, subject_member_id, occurrence_mode,
-         task_definitions!task_instances_definition_id_fkey!inner (
-           household_spaces!task_definitions_location_space_id_fkey ( name )
-         ),
-         task_definition_revisions!task_instances_definition_revision_id_fkey!inner (
-           title,
-           task_definition_criteria!task_definition_criteria_revision_id_fkey ( text, display_order )
-         )`,
-      )
-      // Today's jobs, in the household's timezone — not every instance this
-      // child has ever had.
-      .eq("occurrence_date", await householdToday())
-      .order("id");
+
+    // list_my_jobs, not a query over task_instances.
+    //
+    // An instance exists for every active job every day, because
+    // applicability is decided at call time and never written down — that is
+    // what lets a snow day declared at 07:30 take effect at 07:30. The cost
+    // is that listing instances directly shows jobs that do not apply, and
+    // this page did exactly that: on a Saturday it told Hazel to pack a
+    // school lunch. There is one implementation of "does this apply", in the
+    // database, and this is how a client reaches it.
+    const { data, error: loadError } = await supabase.rpc("list_my_jobs", {
+      p_member_id: memberId,
+    });
     if (loadError) throw new Error(loadError.message);
 
     type Row = {
-      id: string;
+      instance_id: string;
+      title: string;
       state: string;
       version: number;
       correction_note: string | null;
-      subject_member_id: string | null;
-      occurrence_mode: string;
-      task_definitions: { household_spaces: { name: string } | null } | null;
-      task_definition_revisions: {
-        title: string;
-        task_definition_criteria: { text: string; display_order: number }[];
-      };
+      mine: boolean;
+      where: string | null;
+      criteria: string[];
     };
 
+    const rows = (data as Row[]) ?? [];
     const shape = (r: Row): MyTask => ({
-      instance_id: r.id,
-      title: r.task_definition_revisions.title,
+      instance_id: r.instance_id,
+      title: r.title,
       state: r.state,
       version: r.version,
-      where: r.task_definitions?.household_spaces?.name ?? null,
+      where: r.where,
       correction_note: r.correction_note,
-      criteria: [...r.task_definition_revisions.task_definition_criteria]
-        .sort((a, b) => a.display_order - b.display_order)
-        .map((c) => c.text),
+      criteria: r.criteria,
     });
 
     // Reward progress, counted from the work actually recorded. Fetched
@@ -121,11 +110,8 @@ function MyJobs() {
       setRewards((progress as RewardProgress[]) ?? []);
     }
 
-    const rows = (data as unknown as Row[]) ?? [];
-    // Mine means mine. A shared job belongs to the house, and the difference
-    // matters to a child who has already done their own.
-    setMyTasks(rows.filter((r) => r.subject_member_id === memberId).map(shape));
-    setShared(rows.filter((r) => r.subject_member_id === null).map(shape));
+    setMyTasks(rows.filter((r) => r.mine).map(shape));
+    setShared(rows.filter((r) => !r.mine).map(shape));
   }, []);
 
   useEffect(() => {
