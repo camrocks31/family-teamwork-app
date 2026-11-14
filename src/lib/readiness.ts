@@ -31,8 +31,8 @@ export interface Blocker {
   reason_code: BlockerReason;
   /** A sentence a seven-year-old can act on, e.g. "Boys' Bedroom needs attention." */
   reason: string;
-  /** Where to send them: a room or a single task. */
-  link_kind: "space" | "task";
+  /** Where to send them: a room, the pet's page, or their own jobs. */
+  link_kind: "space" | "pet" | "task";
   link_id: string;
   link_name: string;
   title: string;

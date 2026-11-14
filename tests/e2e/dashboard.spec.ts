@@ -162,7 +162,9 @@ test("a blocker links through to the room it names", async ({ page }) => {
   const blockerText = (await blocker.textContent())!;
   await blocker.click();
 
-  await expect(page).toHaveURL(/\/house\/\?space=|\/tasks\//);
+  // /tasks/ used to be in this list. It is not a route in this app, and
+  // accepting it here is why the dead link survived.
+  await expect(page).toHaveURL(/\/house\/\?space=|\/lucy\/|\/me\//);
 
   // The room names itself and says what actually has to be done, rather than
   // repeating the task title back.
@@ -352,4 +354,25 @@ test("a task can actually be ticked off, and the house notices", async ({ page }
   // …and one task really moved out of pending. Propagation to the dashboard
   // is already covered by "the house updates by itself".
   await expect.poll(pendingToday, { timeout: 15_000 }).toBe(before - 1);
+});
+
+test("no blocker on the dashboard points at a page that does not exist", async ({
+  page,
+}) => {
+  // Every blocker that was not a room linked to /tasks/, which is not a
+  // route in this app — so most of a school morning's blockers, including
+  // all four of Lucy's jobs, were dead links on the main screen.
+  await signIn(page);
+
+  const hrefs = await page
+    .getByRole("region")
+    .getByRole("link")
+    .evaluateAll((links) => links.map((a) => (a as HTMLAnchorElement).getAttribute("href") ?? ""));
+  expect(hrefs.length, "there should be blockers to check").toBeGreaterThan(0);
+
+  const routes = ["/", "/house/", "/lucy/", "/me/", "/settings/", "/reset/"];
+  for (const href of hrefs) {
+    const path = href.split("?")[0];
+    expect(routes, `${href} is not a page in this app`).toContain(path);
+  }
 });

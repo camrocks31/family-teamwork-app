@@ -5,6 +5,7 @@ import Link from "next/link";
 import { WhoAmI } from "@/components/who-am-i";
 import type { Actor } from "@/lib/kiosk";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import type { Blocker } from "@/lib/readiness";
 import {
   useDashboard,
   type DashboardActivity,
@@ -138,6 +139,12 @@ export function Dashboard() {
               My jobs
             </Link>
           )}
+          <Link
+            href="/lucy/"
+            className="inline-flex min-h-[48px] items-center rounded-2xl border border-line px-5 font-[family-name:var(--font-display)] text-base font-semibold"
+          >
+            The dog
+          </Link>
           <Link
             href="/settings/"
             className="inline-flex min-h-[48px] items-center rounded-2xl border border-line px-5 font-[family-name:var(--font-display)] text-base font-semibold"
@@ -339,7 +346,7 @@ function ReadinessTile({
           {result.blocking.slice(0, 3).map((b, i) => (
             <li key={`${b.link_id}-${i}`}>
               <Link
-                href={b.link_kind === "space" ? `/house/?space=${b.link_id}` : "/tasks/"}
+                href={blockerHref(b)}
                 className="flex min-h-[32px] items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-strong"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true" className="flex-none">
@@ -479,4 +486,18 @@ function ShoppingCard({ items }: { items: DashboardPayload["shopping"] }) {
       )}
     </section>
   );
+}
+
+/**
+ * Where a blocker should actually send someone.
+ *
+ * Anything that was not a room used to go to /tasks/, which is not a route in
+ * this app — so most of a school morning's blockers, Lucy's four jobs
+ * included, were dead links on the main screen.
+ */
+function blockerHref(b: Blocker): string {
+  if (b.link_kind === "space") return `/house/?space=${b.link_id}`;
+  if (b.link_kind === "pet") return "/lucy/";
+  // A personal job: My jobs lists both their own and the shared ones.
+  return "/me/";
 }
