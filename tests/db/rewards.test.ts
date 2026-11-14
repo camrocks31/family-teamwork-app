@@ -49,19 +49,46 @@ async function children(client: pg.PoolClient) {
 }
 
 /**
- * A completed job for this child, this many days from the household's today.
+ * A completed job that BELONGS to this child, this many days from the
+ * household's today.
  *
- * Each call makes its OWN task. There is one shared instance per task per
- * day — the grain key — so two completions on the same day genuinely need
- * two tasks, and reusing a seeded one collides with whatever the rest of the
- * suite has already left on today's date.
+ * Per-member, because that is what a reward counts now. Each call makes its
+ * own task: the grain key allows one instance per task per child per day, so
+ * two completions on one day genuinely need two tasks.
  *
  * The date is computed in the HOUSEHOLD's timezone, because that is what
- * evaluate_rewards compares against; the server's date would make this wrong
- * for a few hours every evening.
+ * evaluate_rewards compares against.
  */
 let fixtureCount = 0;
 async function completeOne(client: pg.PoolClient, memberId: string, dayOffset = 0) {
+  fixtureCount += 1;
+  const { rows: def } = await client.query<{ id: string }>(
+    `insert into task_definitions (household_id, occurrence_mode)
+     values ($1, 'per_member') returning id`,
+    [parent.householdId],
+  );
+  const { rows: rev } = await client.query<{ id: string }>(
+    `insert into task_definition_revisions
+       (definition_id, household_id, revision_number, title, recurrence, occurrence_mode)
+     values ($1, $2, 1, $3, 'daily', 'per_member') returning id`,
+    [def[0].id, parent.householdId, `Fixture job ${fixtureCount}`],
+  );
+  await client.query(
+    `insert into task_instances
+       (definition_id, definition_revision_id, household_id, occurrence_date,
+        state, occurrence_mode, subject_member_id, completed_by, completed_at)
+     select $1, $2, $3, ((now() at time zone h.timezone)::date + $4::integer),
+            'completed', 'per_member', $5, $5, now()
+       from households h where h.id = $3`,
+    [def[0].id, rev[0].id, parent.householdId, dayOffset, memberId],
+  );
+}
+
+/**
+ * A completed SHARED job, pressed by this child. It belongs to the house, so
+ * it must count toward nobody.
+ */
+async function completeShared(client: pg.PoolClient, memberId: string) {
   fixtureCount += 1;
   const { rows: def } = await client.query<{ id: string }>(
     `insert into task_definitions (household_id, occurrence_mode)
@@ -72,16 +99,16 @@ async function completeOne(client: pg.PoolClient, memberId: string, dayOffset = 
     `insert into task_definition_revisions
        (definition_id, household_id, revision_number, title, recurrence, occurrence_mode)
      values ($1, $2, 1, $3, 'daily', 'shared') returning id`,
-    [def[0].id, parent.householdId, `Fixture job ${fixtureCount}`],
+    [def[0].id, parent.householdId, `Shared fixture ${fixtureCount}`],
   );
   await client.query(
     `insert into task_instances
        (definition_id, definition_revision_id, household_id, occurrence_date,
         state, occurrence_mode, completed_by, completed_at)
-     select $1, $2, $3, ((now() at time zone h.timezone)::date + $4::integer),
-            'completed', 'shared', $5, now()
+     select $1, $2, $3, (now() at time zone h.timezone)::date,
+            'completed', 'shared', $4, now()
        from households h where h.id = $3`,
-    [def[0].id, rev[0].id, parent.householdId, dayOffset, memberId],
+    [def[0].id, rev[0].id, parent.householdId, memberId],
   );
 }
 
@@ -147,7 +174,7 @@ describe("earning a reward", () => {
       await client.query(
         `update task_instances
             set state = 'needs_attention', completed_by = null, completed_at = null
-          where completed_by = $1`,
+          where subject_member_id = $1`,
         [child.id],
       );
 
@@ -284,5 +311,47 @@ describe("only a parent may set rewards", () => {
       "select id from rewards where name = 'Sneaky'",
     );
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("shared work is the house's, not a child's", () => {
+  it("does not count a shared job toward anybody's reward", async () => {
+    // The dishwasher race, in a test. Roland pressing Done on a shared job
+    // used to tick Roland's counter, which rewarded being fast rather than
+    // being useful — and made helping a sibling a losing move.
+    await withRollback(pool, async (client) => {
+      const [first, second] = await children(client);
+      await client.query(
+        `insert into rewards (household_id, name, threshold_count, period)
+         values ($1, 'Film night', 1, 'week')`,
+        [parent.householdId],
+      );
+
+      await completeShared(client, second.id);
+
+      const rows = await asParent(client, () => evaluate(client));
+      expect(rows.find((r) => r.member_id === second.id)!.done,
+        "the child who pressed the button gets nothing").toBe(0);
+      expect(rows.find((r) => r.member_id === first.id)!.done).toBe(0);
+    });
+  });
+
+  it("still counts a job that is genuinely the child's own", async () => {
+    await withRollback(pool, async (client) => {
+      const [child] = await children(client);
+      await client.query(
+        `insert into rewards (household_id, name, threshold_count, period)
+         values ($1, 'Film night', 2, 'week')`,
+        [parent.householdId],
+      );
+
+      await completeOne(client, child.id);
+      await completeShared(client, child.id);
+
+      const mine = (await asParent(client, () => evaluate(client)))
+        .find((r) => r.member_id === child.id)!;
+      // One own job, one shared. Only the first counts.
+      expect(mine.done).toBe(1);
+    });
   });
 });

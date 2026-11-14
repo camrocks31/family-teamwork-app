@@ -57,6 +57,10 @@ function MyJobs() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rewards, setRewards] = useState<RewardProgress[]>([]);
+  // Young or early readers get one job at a time instead of a list. A
+  // list of four is a task list to an eleven-year-old and a wall to a
+  // seven-year-old; the flag is set by a parent, not guessed from age.
+  const [simple, setSimple] = useState(false);
 
   const load = useCallback(async (memberId: string) => {
     const supabase = getSupabaseClient();
@@ -86,7 +90,12 @@ function MyJobs() {
       criteria: string[];
     };
 
-    const rows = (data as Row[]) ?? [];
+    const payload = (data ?? { jobs: [], simple_view: false }) as {
+      simple_view: boolean;
+      jobs: Row[];
+    };
+    setSimple(Boolean(payload.simple_view));
+    const rows = payload.jobs ?? [];
     const shape = (r: Row): MyTask => ({
       instance_id: r.instance_id,
       title: r.title,
@@ -253,6 +262,15 @@ function MyJobs() {
         </section>
       )}
 
+      {simple ? (
+        <SimpleView
+          mine={myTasks}
+          shared={shared}
+          busyId={busyId}
+          onDone={markDone}
+        />
+      ) : (
+        <>
       <TaskList
         heading="Just yours"
         tasks={myTasks}
@@ -269,7 +287,86 @@ function MyJobs() {
         empty="Nothing shared left today."
         count={sharedLeft.length}
       />
+        </>
+      )}
     </main>
+  );
+}
+
+/**
+ * One job, as big as the screen allows.
+ *
+ * Their own work comes first, then the house's. No counts, no sections, no
+ * scrolling: a child who can see only the next thing cannot be overwhelmed
+ * by the list behind it, and finishing it reveals the next one.
+ */
+function SimpleView({
+  mine,
+  shared,
+  busyId,
+  onDone,
+}: {
+  mine: MyTask[];
+  shared: MyTask[];
+  busyId: string | null;
+  onDone: (task: MyTask) => void;
+}) {
+  const outstanding = (t: MyTask) => t.state !== "completed" && t.state !== "not_applicable";
+  const queue = [...mine.filter(outstanding), ...shared.filter(outstanding)];
+  const next = queue[0];
+
+  if (!next) {
+    return (
+      <section className="mt-10 rounded-[var(--radius-card)] border border-[color:var(--color-done)]/30 bg-done-wash p-8 text-center">
+        <p className="font-[family-name:var(--font-display)] text-3xl font-bold text-[color:var(--color-done)]">
+          All done!
+        </p>
+        <p className="mt-2 text-muted">Nothing left for you today.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-8 flex flex-col gap-4">
+      <p className="font-[family-name:var(--font-display)] text-sm font-semibold text-muted">
+        {queue.length === 1 ? "One more thing" : `Next of ${queue.length}`}
+      </p>
+
+      <div className="rounded-[var(--radius-card)] border border-attention-line bg-attention-wash p-6">
+        <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold">
+          {next.title}
+        </h2>
+        {next.where && <p className="mt-1 text-muted">{next.where}</p>}
+
+        {next.correction_note && (
+          <p className="mt-3 rounded-xl border border-attention-line bg-surface px-3 py-2 text-sm text-attention-ink">
+            Have another go: {next.correction_note}
+          </p>
+        )}
+
+        {next.criteria.length > 0 && (
+          <ul className="mt-4 flex flex-col gap-2">
+            {next.criteria.map((c, i) => (
+              <li key={i} className="flex gap-2.5 text-base">
+                <span aria-hidden="true" className="text-muted">
+                  ·
+                </span>
+                {c}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <button
+          type="button"
+          disabled={busyId === next.instance_id}
+          onClick={() => onDone(next)}
+          className="mt-6 min-h-[64px] w-full rounded-2xl bg-accent font-[family-name:var(--font-display)] text-xl font-bold text-white disabled:opacity-60"
+        >
+          {busyId === next.instance_id ? "Saving…" : "I did it"}
+        </button>
+      </div>
+    </section>
   );
 }
 

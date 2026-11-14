@@ -136,12 +136,14 @@ test("a parent sees the household: people, rooms, activities, the pet and shoppi
   await expect(page.getByRole("heading", { name: "Play Video Games" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Watch TV" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dog" })).toBeVisible();
-  await expect(page.getByText("Children's Bedroom")).toBeVisible();
+  // .first(): a room name now appears on its house chip AND on the shared
+  // blocker chips above the per-child tiles.
+  await expect(page.getByText("Children's Bedroom").first()).toBeVisible();
 
   // Both adult-shared rooms are shown — they have their own tasks — even
   // though neither gates the children's activities.
-  await expect(page.getByText("Adult Bedroom")).toBeVisible();
-  await expect(page.getByText("Shared Bedroom")).toBeVisible();
+  await expect(page.getByText("Adult Bedroom").first()).toBeVisible();
+  await expect(page.getByText("Shared Bedroom").first()).toBeVisible();
 });
 
 test("every status is written out, not just coloured", async ({ page }) => {

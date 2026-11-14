@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { WhoAmI } from "@/components/who-am-i";
+import { MemberBadge, memberColour, type BadgePerson } from "@/components/member-badge";
 import type { Actor } from "@/lib/kiosk";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { Blocker } from "@/lib/readiness";
@@ -161,13 +162,7 @@ export function Dashboard() {
               key={m.id}
               className="flex flex-col items-center gap-1.5 rounded-[var(--radius-card)] border border-line border-b-[3px] bg-surface px-3 py-4"
             >
-              <span
-                aria-hidden="true"
-                className="flex h-12 w-12 items-center justify-center rounded-full border-2 text-2xl"
-                style={{ borderColor: m.accent_color ?? "var(--color-line)" }}
-              >
-                {m.avatar_emoji ?? "🙂"}
-              </span>
+              <MemberBadge person={m} size="lg" />
               <span className="font-[family-name:var(--font-display)] text-base font-semibold">
                 {m.display_name}
               </span>
@@ -265,7 +260,7 @@ function ActivityCard({
   members,
 }: {
   activity: DashboardActivity;
-  members: { id: string; display_name: string; avatar_emoji: string | null }[];
+  members: BadgePerson[];
 }) {
   // One tile per child: the same activity is legitimately ready for one and
   // not another, so a single household answer would be wrong for someone.
@@ -274,6 +269,8 @@ function ActivityCard({
   // agree read as the same list printed three times — which is how this
   // first looked on the wall, and a fair reading of it.
   const nameOf = new Map(members.map((m) => [m.id, m]));
+  const shared = sharedBlockers(activity);
+  const sharedKeys = new Set(shared.map(blockerKey));
   return (
     <section
       aria-labelledby={`activity-${activity.id}`}
@@ -288,10 +285,40 @@ function ActivityCard({
         </span>
         {activity.name}
       </h2>
-      <ul className="mt-4 grid gap-3 sm:grid-cols-3">
+      {/* Shared blockers once, under the house; personal ones per child.
+          Rendering a full list per child printed the same three dog jobs
+          three times — about 80% of the card was duplication, and it buried
+          the part that actually differs. */}
+      {shared.length > 0 && (
+        <div className="mt-4 rounded-2xl border border-attention-line bg-attention-wash p-4">
+          <p className="font-[family-name:var(--font-display)] text-sm font-semibold text-attention-ink">
+            The house needs {shared.length}
+            {shared.length === 1 ? " thing" : " things"}
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {shared.map((b) => (
+              <li key={`${b.link_kind}-${b.link_id}`}>
+                <Link
+                  href={blockerHref(b)}
+                  className="inline-flex min-h-[36px] items-center rounded-full border border-attention-line bg-surface px-3 text-xs font-semibold text-attention-ink"
+                >
+                  {b.link_name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <ul className="mt-3 grid gap-3 sm:grid-cols-3">
         {activity.per_member.map((r) => (
           <li key={r.member_id}>
-            <ReadinessTile result={r} member={nameOf.get(r.member_id)} />
+            <ReadinessTile
+              result={r}
+              member={nameOf.get(r.member_id)}
+              sharedCount={shared.length}
+              personal={personalOnly(r, sharedKeys)}
+            />
           </li>
         ))}
       </ul>
@@ -299,22 +326,58 @@ function ActivityCard({
   );
 }
 
+/** A blocker's identity, for telling shared ones from personal ones. */
+function blockerKey(b: Blocker): string {
+  return `${b.link_kind}:${b.link_id}`;
+}
+
+/**
+ * The blockers every child has in common — the house's work rather than
+ * anyone's own. Shown once above, and stripped from each child's tile.
+ */
+function sharedBlockers(activity: DashboardActivity): Blocker[] {
+  const tiles = activity.per_member;
+  if (tiles.length === 0) return [];
+  const [first, ...rest] = tiles;
+  return first.blocking.filter((b) =>
+    rest.every((t) => t.blocking.some((o) => blockerKey(o) === blockerKey(b))),
+  );
+}
+
+function personalOnly(result: ReadinessResult, sharedKeys: Set<string>): Blocker[] {
+  return result.blocking.filter((b) => !sharedKeys.has(blockerKey(b)));
+}
+
 function ReadinessTile({
   result,
   member,
+  sharedCount = 0,
+  personal,
 }: {
   result: ReadinessResult;
-  member?: { display_name: string; avatar_emoji: string | null };
+  member?: BadgePerson;
+  sharedCount?: number;
+  /** This child's own blockers, with the house's already stripped out. */
+  personal?: Blocker[];
 }) {
   const ready = result.status === "ready_to_ask" || result.status === "approved";
-  const label =
-    result.status === "approved"
+  const own = personal ?? result.blocking;
+
+  // The verdict, not the inventory. "13 things left" is a single
+  // demoralising number with no shape — it says nothing about what to do
+  // next or how long any of it takes. Say yes, or say how far away yes is,
+  // and distinguish this child's own work from the whole house's.
+  const label = ready
+    ? result.status === "approved"
       ? "Yes — go ahead"
-      : result.status === "ready_to_ask"
-        ? "Ready to ask"
-        : result.status === "temporarily_unavailable"
-          ? "Not right now"
-          : `${result.blocking.length} thing${result.blocking.length === 1 ? "" : "s"} left`;
+      : "Yes, you can"
+    : result.status === "temporarily_unavailable"
+      ? "Not right now"
+      : own.length > 0
+        ? `${own.length} of yours`
+        : sharedCount > 0
+          ? "Just the house"
+          : "Not yet";
 
   return (
     <div
@@ -325,10 +388,11 @@ function ReadinessTile({
       }`}
     >
       {member && (
-        <p className="mb-1.5 flex items-center gap-1.5 font-[family-name:var(--font-display)] text-sm font-semibold">
-          {member.avatar_emoji && (
-            <span aria-hidden="true">{member.avatar_emoji}</span>
-          )}
+        <p
+          className="mb-1.5 flex items-center gap-2 font-[family-name:var(--font-display)] text-sm font-semibold"
+          style={{ color: memberColour(member) }}
+        >
+          <MemberBadge person={member} size="sm" />
           {member.display_name}
         </p>
       )}
@@ -352,9 +416,9 @@ function ReadinessTile({
         <p className="mt-1.5 text-xs text-muted">{result.reasons[0]}</p>
       )}
 
-      {result.blocking.length > 0 && (
+      {own.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1.5">
-          {result.blocking.slice(0, 3).map((b, i) => (
+          {own.slice(0, 3).map((b, i) => (
             <li key={`${b.link_id}-${i}`}>
               <Link
                 href={blockerHref(b)}
@@ -367,8 +431,8 @@ function ReadinessTile({
               </Link>
             </li>
           ))}
-          {result.blocking.length > 3 && (
-            <li className="text-xs text-muted">and {result.blocking.length - 3} more</li>
+          {own.length > 3 && (
+            <li className="text-xs text-muted">and {own.length - 3} more</li>
           )}
         </ul>
       )}
@@ -393,25 +457,59 @@ function HouseCard({ data }: { data: DashboardPayload }) {
         <div className="h-full rounded-full bg-[color:var(--color-done)]" style={{ width: `${pct}%` }} />
       </div>
 
-      {data.floors.map((floor: DashboardFloor) => (
-        <div key={floor.id} className="mt-4">
-          <h3 className="mb-2 text-xs font-semibold text-muted">{floor.name}</h3>
-          <ul className="flex flex-wrap gap-2">
-            {floor.rooms.map((room) => (
-              <li key={room.space_id}>
-                <Link
-                  href={`/house/?space=${room.space_id}`}
-                  className={`flex min-h-[44px] items-center gap-2 rounded-xl border px-3 py-2 text-sm ${SPACE_TONE[room.status]}`}
-                >
-                  <span aria-hidden="true">{room.icon}</span>
-                  <span className="font-medium text-ink">{room.name}</span>
-                  <span className="text-xs font-semibold">{SPACE_LABEL[room.status]}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+      {/* Outstanding rooms first and at full weight; finished ones shrink to
+          quiet chips underneath. Eleven rooms all labelled "Needs attention"
+          in the same colour is the same as labelling none of them — uniform
+          urgency gives the eye nothing to land on. */}
+      {data.floors.map((floor: DashboardFloor) => {
+        const outstanding = floor.rooms.filter((r) => r.status !== "ready");
+        const settled = floor.rooms.filter((r) => r.status === "ready");
+        return (
+          <div key={floor.id} className="mt-4">
+            <h3 className="mb-2 text-xs font-semibold text-muted">{floor.name}</h3>
+
+            {outstanding.length > 0 && (
+              <ul className="flex flex-wrap gap-2">
+                {outstanding.map((room) => (
+                  <li key={room.space_id}>
+                    <Link
+                      href={`/house/?space=${room.space_id}`}
+                      className={`flex min-h-[44px] items-center gap-2 rounded-xl border px-3 py-2 text-sm ${SPACE_TONE[room.status]}`}
+                    >
+                      <span aria-hidden="true">{room.icon}</span>
+                      <span className="font-medium text-ink">{room.name}</span>
+                      <span className="text-xs font-semibold">{SPACE_LABEL[room.status]}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {settled.length > 0 && (
+              <ul className={`flex flex-wrap gap-1.5 ${outstanding.length > 0 ? "mt-2" : ""}`}>
+                {settled.map((room) => (
+                  <li key={room.space_id}>
+                    <Link
+                      href={`/house/?space=${room.space_id}`}
+                      title={`${room.name} — ready`}
+                      className="flex min-h-[32px] items-center gap-1.5 rounded-full border border-[color:var(--color-done)]/25 bg-done-wash px-2.5 text-xs text-[color:var(--color-done)]"
+                    >
+                      <span aria-hidden="true">{room.icon}</span>
+                      <span className="font-medium">{room.name}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {outstanding.length === 0 && settled.length > 0 && (
+              <p className="mt-1.5 text-xs font-semibold text-[color:var(--color-done)]">
+                All done.
+              </p>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }

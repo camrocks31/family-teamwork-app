@@ -145,10 +145,10 @@ test("a parent sets up the tablet and a PIN, then a child logs their own job", a
   await expect(page.getByRole("main").getByRole("alert")).toContainText(/not the right PIN/i);
 
   for (const d of PIN) await page.getByRole("button", { name: d, exact: true }).click();
-  await expect(page.getByText(`Hello, ${childName}`)).toBeVisible();
 
-  // --- and does a job ---
-  await page.getByRole("link", { name: "My jobs" }).click();
+  // The PIN lands them on their OWN jobs. It used to drop them back on the
+  // household dashboard and make them find "My jobs" — three taps to reach
+  // the only screen they came for.
   await expect(page.getByRole("heading", { name: `${childName}’s jobs` })).toBeVisible();
 
   const done = page.getByRole("button", { name: "Done" }).first();
@@ -264,6 +264,9 @@ test("a reward a parent sets up shows up as progress on the child's screen", asy
   // parent creates one, the child sees progress, does a job, and the number
   // moves.
   const reward = `Film night ${Date.now()}`;
+  // Unique per run: each run inserts its own job, and a fixed title would
+  // match every previous run's leftovers.
+  const ownJob = `Water bottle ${Date.now()}`;
 
   const { error: resetError } = await admin
     .from("task_instances")
@@ -281,6 +284,41 @@ test("a reward a parent sets up shows up as progress on the child's screen", asy
     })
     .eq("occurrence_date", today);
   if (resetError) throw new Error(`fixture reset failed: ${resetError.message}`);
+
+  // A reward counts only the child's OWN jobs — a shared one belongs to the
+  // house and deliberately counts for nobody, which is what stops the boys
+  // racing each other to the dishwasher. The seed's only per-child jobs are
+  // school-morning ones, so on a weekend this child would have none at all.
+  // Give them one.
+  const { data: own, error: ownError } = await admin
+    .from("task_definitions")
+    .insert({ household_id: householdId, occurrence_mode: "per_member" })
+    .select("id")
+    .single();
+  if (ownError) throw new Error(ownError.message);
+  const { data: ownRev, error: revError } = await admin
+    .from("task_definition_revisions")
+    .insert({
+      definition_id: own!.id,
+      household_id: householdId,
+      revision_number: 1,
+      title: ownJob,
+      recurrence: "daily",
+      occurrence_mode: "per_member",
+    })
+    .select("id")
+    .single();
+  if (revError) throw new Error(revError.message);
+  const { error: instError } = await admin.from("task_instances").insert({
+    definition_id: own!.id,
+    definition_revision_id: ownRev!.id,
+    household_id: householdId,
+    occurrence_date: today,
+    state: "pending",
+    occurrence_mode: "per_member",
+    subject_member_id: childId,
+  });
+  if (instError) throw new Error(instError.message);
 
   await page.goto("/");
   await page.getByLabel("Email").fill(EMAIL);
@@ -311,17 +349,25 @@ test("a reward a parent sets up shows up as progress on the child's screen", asy
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(childName) }).click();
   for (const d of PIN) await page.getByRole("button", { name: d, exact: true }).click();
-  await expect(page.getByText(`Hello, ${childName}`)).toBeVisible();
 
-  await page.getByRole("link", { name: "My jobs" }).click();
+  // Straight to their own jobs — no detour via the dashboard.
+  await expect(page.getByRole("heading", { name: `${childName}’s jobs` })).toBeVisible();
   const bar = page.getByRole("progressbar", { name: new RegExp(reward) });
   await expect(bar).toBeVisible();
   await expect(bar).toHaveAttribute("aria-valuenow", "0");
   await expect(bar).toHaveAttribute("aria-valuemax", "3");
 
-  // --- and doing a job moves it ---
-  await page.getByRole("button", { name: "Done" }).first().click();
+  // --- and doing one of THEIR OWN jobs moves it ---
+  const mine = page.getByRole("listitem").filter({ hasText: ownJob });
+  await mine.getByRole("button", { name: "Done" }).click();
   await expect(bar).toHaveAttribute("aria-valuenow", "1", { timeout: 15_000 });
+
+  // And a shared one does not: it belongs to the house.
+  const sharedJob = page.getByRole("listitem").filter({ hasText: "Feed the dog" }).first();
+  if (await sharedJob.count()) {
+    await sharedJob.getByRole("button", { name: "Done" }).click();
+    await expect(bar).toHaveAttribute("aria-valuenow", "1", { timeout: 10_000 });
+  }
 });
 
 test("the dog's page says who fed her and when", async ({ page }) => {
@@ -354,6 +400,13 @@ test("the dog's page says who fed her and when", async ({ page }) => {
   // exact: the blocker links on the dashboard also name her jobs.
   await page.getByRole("link", { name: "The dog", exact: true }).click();
 
+  // Wait for the dog's own page before matching job names: the dashboard
+  // now shows the same names as shared-blocker chips. The pet's name comes
+  // from the seed — it is a placeholder here and the family's real dog on
+  // the deployed database, so read it rather than hardcoding it.
+  const { data: pet } = await admin.from("pets").select("name").limit(1).single();
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(pet!.name);
+
   // All four things the brief tracks separately.
   for (const job of [
     "Feed the dog",
@@ -361,7 +414,9 @@ test("the dog's page says who fed her and when", async ({ page }) => {
     "Take the dog outside",
     "Pick up after the dog",
   ]) {
-    await expect(page.getByText(job, { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("listitem").filter({ hasText: job }).first(),
+    ).toBeVisible();
   }
 
   // Nothing is claimed before anyone does it.

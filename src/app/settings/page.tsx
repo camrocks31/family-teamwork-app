@@ -8,6 +8,8 @@ import { enrollThisDevice, forgetThisDevice, getDeviceId } from "@/lib/kiosk";
 import { SettingsRooms, type Space } from "@/components/settings-rooms";
 import { SettingsTasks } from "@/components/settings-tasks";
 import { SettingsRewards } from "@/components/settings-rewards";
+import { SettingsSkins } from "@/components/settings-skins";
+import { MemberBadge } from "@/components/member-badge";
 
 /**
  * Settings — the parent's side of the hub.
@@ -28,6 +30,8 @@ interface Member {
   display_name: string;
   role: "parent" | "child";
   avatar_emoji: string | null;
+  accent_color: string | null;
+  simple_view: boolean;
   has_pin: boolean;
 }
 
@@ -62,7 +66,7 @@ function Settings() {
 
     const { data: people, error: peopleError } = await supabase
       .from("family_members")
-      .select("id, display_name, role, avatar_emoji")
+      .select("id, display_name, role, avatar_emoji, accent_color, simple_view")
       .eq("is_active", true)
       .order("role")
       .order("display_name");
@@ -284,6 +288,15 @@ function Settings() {
         }}
       />
 
+      <SettingsSkins
+        members={members}
+        onError={setError}
+        onNote={(m) => {
+          setNote(m);
+          void load();
+        }}
+      />
+
       {householdId && (
         <SettingsRewards
           householdId={householdId}
@@ -371,7 +384,7 @@ function PinForm({
       className="flex flex-wrap items-end gap-3 rounded-[var(--radius-card)] border border-line bg-surface p-4"
     >
       <p className="flex items-center gap-2 font-[family-name:var(--font-display)] text-lg font-semibold">
-        <span aria-hidden="true">{member.avatar_emoji ?? "🙂"}</span>
+        <MemberBadge person={member} size="sm" />
         {member.display_name}
       </p>
       <div className="flex flex-col gap-1.5">

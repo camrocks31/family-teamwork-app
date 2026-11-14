@@ -57,6 +57,25 @@ async function materializeToday(client: pg.PoolClient) {
   );
 }
 
+/**
+ * A moment inside the household's school-morning window.
+ *
+ * School-morning jobs apply on a school day AND between the window's start
+ * and end — 06:30 to 08:30 here. Evaluating at now() therefore makes the
+ * result depend on what time the suite happens to run, which is how this
+ * file passed all morning and failed after lunch.
+ */
+async function duringMorning(client: pg.PoolClient): Promise<string> {
+  const { rows } = await client.query<{ at: string }>(
+    `select ((app_household_today($1)::timestamp
+              + h.morning_window_start
+              + interval '15 minutes') at time zone h.timezone)::text as at
+       from households h where h.id = $1`,
+    [parent.householdId],
+  );
+  return rows[0].at;
+}
+
 async function aChild(client: pg.PoolClient) {
   const { rows } = await client.query<{ id: string }>(
     `select id from family_members
@@ -90,13 +109,21 @@ describe("My jobs only lists what applies", () => {
       // Materialisation derives the household from the session, so it runs
       // as the parent. app_household_today is internal and not granted to a
       // client, so the date is worked out first.
-      await materializeToday(client);
+      // The day has to be decided before the instances are made:
+      // ensure_day_materialized skips jobs that do not apply, so setting
+      // the override afterwards would find nothing to withhold. This test
+      // passed for a week purely because the week had school days in it.
       await setSchoolDay(client, false);
+      await materializeToday(client);
 
+      const at = await duringMorning(client);
       const { rows } = await asParent(client, () =>
-        client.query<{ j: { title: string }[] }>("select list_my_jobs($1) as j", [child]),
+        client.query<{ j: { jobs: { title: string }[] } }>(
+          "select list_my_jobs($1, $2::timestamptz) as j",
+          [child, at],
+        ),
       );
-      const titles = rows[0].j.map((t) => t.title);
+      const titles = rows[0].j.jobs.map((t) => t.title);
 
       // The instances exist; they simply do not apply.
       const { rows: present } = await client.query<{ n: number }>(
@@ -119,14 +146,20 @@ describe("My jobs only lists what applies", () => {
       // Materialisation derives the household from the session, so it runs
       // as the parent. app_household_today is internal and not granted to a
       // client, so the date is worked out first.
-      await materializeToday(client);
       await setSchoolDay(client, true);
+      await materializeToday(client);
 
+      const at = await duringMorning(client);
       const { rows } = await asParent(client, () =>
-        client.query<{ j: { title: string }[] }>("select list_my_jobs($1) as j", [child]),
+        client.query<{ j: { jobs: { title: string }[] } }>(
+          "select list_my_jobs($1, $2::timestamptz) as j",
+          [child, at],
+        ),
       );
-      const titles = rows[0].j.map((t) => t.title);
-      expect(titles).toContain("Pack a proper lunch");
+      const titles = rows[0].j.jobs.map((t) => t.title);
+      expect(titles, "a school-morning job applies on a school morning").toContain(
+        "Pack a proper lunch",
+      );
     });
   });
 
@@ -139,13 +172,13 @@ describe("My jobs only lists what applies", () => {
       await materializeToday(client);
 
       const { rows } = await asParent(client, () =>
-        client.query<{ j: { title: string; mine: boolean }[] }>(
+        client.query<{ j: { jobs: { title: string; mine: boolean }[] } }>(
           "select list_my_jobs($1) as j",
           [child],
         ),
       );
-      expect(rows[0].j.length).toBeGreaterThan(0);
-      expect(rows[0].j.some((t) => t.mine === false), "shared jobs appear").toBe(true);
+      expect(rows[0].j.jobs.length).toBeGreaterThan(0);
+      expect(rows[0].j.jobs.some((t) => t.mine === false), "shared jobs appear").toBe(true);
     });
   });
 
@@ -187,6 +220,36 @@ describe("the school-morning banner tells the truth", () => {
         client.query<{ v: boolean }>("select app_today_is_school_day() as v"),
       );
       expect(rows[0].v).toBe(true);
+    });
+  });
+});
+
+describe("the youngest get one job at a time", () => {
+  it("reports whether this child wants the simple view", async () => {
+    // A flag rather than an age: there is no birth date in this schema, and
+    // the real signal is reading confidence, which a parent can judge.
+    await withRollback(pool, async (client) => {
+      const child = await aChild(client);
+      await materializeToday(client);
+
+      let result = await asParent(client, () =>
+        client.query<{ j: { simple_view: boolean; display_name: string } }>(
+          "select list_my_jobs($1) as j",
+          [child],
+        ),
+      );
+      expect(result.rows[0].j.simple_view).toBe(false);
+
+      await client.query("update family_members set simple_view = true where id = $1", [child]);
+
+      result = await asParent(client, () =>
+        client.query<{ j: { simple_view: boolean; display_name: string } }>(
+          "select list_my_jobs($1) as j",
+          [child],
+        ),
+      );
+      expect(result.rows[0].j.simple_view).toBe(true);
+      expect(result.rows[0].j.display_name).toBeTruthy();
     });
   });
 });

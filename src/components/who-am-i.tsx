@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { MemberBadge } from "@/components/member-badge";
 import {
   clearActor,
   getActor,
@@ -14,6 +16,7 @@ export interface Person {
   display_name: string;
   role: "parent" | "child";
   avatar_emoji: string | null;
+  accent_color?: string | null;
 }
 
 /**
@@ -37,6 +40,7 @@ export function WhoAmI({
   people: Person[];
   onChange?: (actor: Actor | null) => void;
 }) {
+  const router = useRouter();
   const [actor, setActor] = useState<Actor | null>(null);
   const [choosing, setChoosing] = useState<Person | null>(null);
   const [enrolled, setEnrolled] = useState(true);
@@ -82,11 +86,20 @@ export function WhoAmI({
   }
 
   if (choosing) {
+    const person = choosing;
     return (
       <PinPad
-        person={choosing}
+        person={person}
         onCancel={() => setChoosing(null)}
-        onSuccess={adopt}
+        onSuccess={(next) => {
+          adopt(next);
+          // A child who has just said who they are wants their own jobs, not
+          // the household dashboard. The old flow dropped them back here and
+          // made them find "My jobs" — three taps to reach the only screen
+          // they came for. A parent picking their own face stays put,
+          // because this page IS their view.
+          if (person.role === "child") router.push("/me/");
+        }}
       />
     );
   }
@@ -114,9 +127,7 @@ export function WhoAmI({
               onClick={() => setChoosing(p)}
               className="flex min-h-[96px] min-w-[96px] flex-col items-center justify-center gap-1 rounded-2xl border border-line bg-ground px-4 py-3 disabled:opacity-50"
             >
-              <span aria-hidden="true" className="text-3xl">
-                {p.avatar_emoji ?? "🙂"}
-              </span>
+              <MemberBadge person={p} size="xl" />
               <span className="font-[family-name:var(--font-display)] font-semibold">
                 {p.display_name}
               </span>
@@ -188,9 +199,7 @@ function PinPad({
       className="rounded-[var(--radius-card)] border border-line bg-surface p-5"
     >
       <div className="flex items-center gap-3">
-        <span aria-hidden="true" className="text-3xl">
-          {person.avatar_emoji ?? "🙂"}
-        </span>
+        <MemberBadge person={person} size="lg" />
         <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">
           {person.display_name}, what is your PIN?
         </h2>
