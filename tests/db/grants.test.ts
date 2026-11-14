@@ -44,6 +44,8 @@ const AUTHENTICATED_MAY_EXECUTE = [
   "return_task_instance",
   "revoke_device",
   "revoke_member_session",
+  "save_task",
+  "set_task_active",
   "set_member_pin",
   "start_task_instance",
   "submit_task_instance",

@@ -6,6 +6,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getActor, type Actor } from "@/lib/kiosk";
 import { TaskConflictError, tasks as taskApi } from "@/lib/tasks";
+import { householdToday } from "@/lib/dashboard";
 
 /**
  * My jobs — what this child has to do today, and a button to say it is done.
@@ -63,6 +64,9 @@ function MyJobs() {
            task_definition_criteria!task_definition_criteria_revision_id_fkey ( text, display_order )
          )`,
       )
+      // Today's jobs, in the household's timezone — not every instance this
+      // child has ever had.
+      .eq("occurrence_date", await householdToday())
       .order("id");
     if (loadError) throw new Error(loadError.message);
 

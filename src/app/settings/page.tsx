@@ -5,6 +5,8 @@ import Link from "next/link";
 import { AuthGate } from "@/components/auth-gate";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { enrollThisDevice, forgetThisDevice, getDeviceId } from "@/lib/kiosk";
+import { SettingsRooms, type Space } from "@/components/settings-rooms";
+import { SettingsTasks } from "@/components/settings-tasks";
 
 /**
  * Settings — the parent's side of the hub.
@@ -51,6 +53,8 @@ function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [householdId, setHouseholdId] = useState<string | null>(null);
+  const [spaces, setSpaces] = useState<Space[]>([]);
 
   const load = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -74,6 +78,17 @@ function Settings() {
     const { data: deviceRows, error: deviceError } = await supabase.rpc("list_devices");
     if (deviceError) throw new Error(deviceError.message);
     setDevices((deviceRows as Device[]) ?? []);
+
+    const { data: household } = await supabase.from("households").select("id").maybeSingle();
+    if (household) setHouseholdId(household.id);
+
+    const { data: spaceRows, error: spaceError } = await supabase
+      .from("household_spaces")
+      .select("id, parent_space_id, name, icon, display_order, is_active")
+      .order("display_order")
+      .order("name");
+    if (spaceError) throw new Error(spaceError.message);
+    setSpaces((spaceRows as Space[]) ?? []);
   }, []);
 
   useEffect(() => {
@@ -247,16 +262,36 @@ function Settings() {
         </ul>
       </section>
 
+      {householdId && (
+        <SettingsRooms
+          householdId={householdId}
+          onError={setError}
+          onNote={(m) => {
+            setNote(m);
+            void load();
+          }}
+        />
+      )}
+
+      <SettingsTasks
+        spaces={spaces}
+        members={members}
+        onError={setError}
+        onNote={(m) => {
+          setNote(m);
+          void load();
+        }}
+      />
+
       <section className="mt-10 rounded-[var(--radius-card)] border border-line bg-surface p-4">
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Not here yet
         </h2>
         <p className="mt-1 text-sm text-muted">
-          Editing rooms, tasks and their criteria, and setting up rewards. All
-          of it is editable data rather than anything hard-coded — the screens
-          are the part that is still missing.
+          Rewards, Lucy&rsquo;s own page, shopping and the calendar.
         </p>
       </section>
+
     </main>
   );
 }

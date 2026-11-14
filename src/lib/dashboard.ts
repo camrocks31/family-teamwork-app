@@ -241,3 +241,20 @@ export function useDashboard(householdId: string | null) {
 
   return { data, error, loading, refresh };
 }
+
+/**
+ * Today, in the household's own timezone.
+ *
+ * Not the device's. A tablet on the kitchen wall and a phone that has
+ * travelled must agree on which day's jobs they are showing, and the
+ * household's timezone is the only answer both can reach.
+ */
+export async function householdToday(): Promise<string> {
+  const { data, error } = await getSupabaseClient()
+    .from("households")
+    .select("timezone")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const timezone = data?.timezone ?? "UTC";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
+}

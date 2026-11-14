@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { evaluateSpaceStatus, type SpaceResult, type SpaceStatus } from "@/lib/readiness";
 import { TaskConflictError, tasks as taskApi } from "@/lib/tasks";
+import { householdToday } from "@/lib/dashboard";
 
 /**
  * One room, and exactly what is left in it.
@@ -97,6 +98,11 @@ export function RoomView() {
              )`,
           )
           .eq("task_definitions.location_space_id", spaceId)
+          // TODAY only. Without this the page listed every instance this room
+          // has ever had, so the first "Mark done" could belong to last
+          // Tuesday — the button worked perfectly and changed a day nobody
+          // was looking at.
+          .eq("occurrence_date", await householdToday())
           .order("id");
         if (taskError) throw new Error(taskError.message);
 

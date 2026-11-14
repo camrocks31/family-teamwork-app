@@ -85,6 +85,26 @@ test.beforeAll(async () => {
 test("a parent sets up the tablet and a PIN, then a child logs their own job", async ({
   page,
 }) => {
+  // Start from a known day. The database suite and the earlier browser tests
+  // leave today's tasks in whatever state they finished in, and a test that
+  // depends on that is a test that passes alone and fails in the suite.
+  const { error: resetError } = await admin
+    .from("task_instances")
+    .update({
+      state: "pending",
+      completed_by: null,
+      completed_at: null,
+      submitted_by: null,
+      submitted_at: null,
+      not_applicable_reason: null,
+      not_applicable_by: null,
+      not_applicable_at: null,
+      exemption_note: null,
+      correction_note: null,
+    })
+    .eq("occurrence_date", today);
+  if (resetError) throw new Error(`fixture reset failed: ${resetError.message}`);
+
   await page.goto("/");
   await page.getByLabel("Email").fill(EMAIL);
   await page.getByLabel("Password").fill(PASSWORD);
@@ -171,4 +191,67 @@ test("a child cannot sign in on a tablet that was never set up", async ({ page }
   const tile = page.getByRole("button", { name: new RegExp(childName) });
   await expect(tile).toBeDisabled();
   await expect(page.getByText(/has not been set up yet/i)).toBeVisible();
+});
+
+test("a parent adds a room and a job, and the job appears for the family", async ({
+  page,
+}) => {
+  // The brief's standing requirement: rooms, tasks and their criteria are
+  // editable data, never hard-coded. Until this screen existed they were
+  // editable in principle — by writing SQL.
+  const room = `Utility Room ${Date.now()}`;
+  const job = `Sweep the floor ${Date.now()}`;
+
+  await page.goto("/");
+  await page.getByLabel("Email").fill(EMAIL);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("link", { name: "Settings" }).click();
+
+  // --- a new room ---
+  await page.getByRole("button", { name: /Add a room to Downstairs/ }).click();
+  await page.getByLabel("Room name").fill(room);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  // exact, because the confirmation message also contains the name.
+  await expect(page.getByText(room, { exact: true })).toBeVisible();
+
+  // --- a new job in it, with real criteria ---
+  await page.getByRole("button", { name: "Add a job" }).click();
+  await page.getByLabel("What is the job called?").fill(job);
+  await page.getByRole("textbox", { name: "Thing to check 1" }).fill("Floor swept");
+  await page.getByRole("button", { name: "Add another" }).click();
+  await page.getByRole("textbox", { name: "Thing to check 2" }).fill("Bin emptied");
+  await page.getByLabel("Which room?").selectOption({ label: room });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(page.getByRole("main").getByRole("status")).toContainText(/added/i);
+  await expect(page.getByText(job, { exact: true })).toBeVisible();
+  await expect(page.getByText(/2 things to check/).first()).toBeVisible();
+
+  // It is a real definition with a real revision and real criteria.
+  const { data: saved } = await admin
+    .from("task_definition_revisions")
+    .select("title, revision_number")
+    .eq("title", job)
+    .single();
+  expect(saved).toMatchObject({ title: job, revision_number: 1 });
+
+  // --- editing it writes a second revision, leaving the first alone ---
+  await page
+    .getByRole("listitem")
+    .filter({ hasText: job })
+    .getByRole("button", { name: "Edit" })
+    .click();
+  await page.getByLabel("What is the job called?").fill(`${job} (tidied up)`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("status")).toContainText(/saved/i);
+
+  const { data: revisions } = await admin
+    .from("task_definition_revisions")
+    .select("title, revision_number")
+    .in("title", [job, `${job} (tidied up)`])
+    .order("revision_number");
+  expect(revisions!.map((r) => r.revision_number)).toEqual([1, 2]);
+  // The original wording still exists, which is the whole point.
+  expect(revisions![0].title).toBe(job);
 });
