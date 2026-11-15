@@ -265,10 +265,23 @@ double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
-secure_password_change = false
+# ON, with require_current_password below, because of HAL-1554: /reset used to
+# accept any restored session, so a child at the wall-mounted iPad could set a
+# parent's password. The page now gates on the PASSWORD_RECOVERY event, and
+# these two settings mean the client is not the only thing stopping it — an
+# ordinary signed-in session is refused by Supabase as well.
+secure_password_change = true
 # If enabled, users will need to provide their current password to change their password, unless
 # they signed in with a one-time password, magic link, or recovery link.
-# require_current_password = true
+# The recovery-link exemption is what keeps the real forgot-password journey
+# working; tests/e2e/reset.spec.ts drives it end to end against THIS stack.
+#
+# Local only, and that is the whole problem. This file is never pushed (see
+# the warning at the top), so setting it here protects development and CI and
+# does NOT protect the live project. The deployed site is guarded by the
+# client-side event check alone, which is forgeable. Applying these two to the
+# hosted project is the real fix and needs a minimal push or the dashboard.
+require_current_password = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
