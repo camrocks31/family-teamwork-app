@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { appUrl, getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { PasswordField } from "@/components/password-field";
 
 type State =
   | { kind: "loading" }
@@ -245,21 +246,13 @@ function SignInForm() {
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="text-sm font-semibold">
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-line"
-          />
-        </div>
+        <PasswordField
+          id="password"
+          label="Password"
+          autoComplete="current-password"
+          value={password}
+          onChange={setPassword}
+        />
 
         {error && (
           <p

@@ -32,6 +32,7 @@ const AUTHENTICATED_MAY_EXECUTE = [
   "app_is_parent",
   "app_today_is_school_day",
   "approve_task_instance",
+  "choose_job",
   "complete_task_instance",
   "create_device_enrollment_code",
   "enroll_this_device",
@@ -44,6 +45,7 @@ const AUTHENTICATED_MAY_EXECUTE = [
   "list_devices",
   "list_my_jobs",
   "mark_task_not_needed",
+  "release_job",
   "return_task_instance",
   "revoke_device",
   "revoke_member_session",
@@ -105,6 +107,10 @@ describe("function grants", () => {
       // children by id alone, so it belongs here rather than in the list above.
       "app_activity_audience",
       "app_apply_transition",
+      // The one authority value for choose_job/release_job, and the locked
+      // eligibility check they share. Both bypass RLS and assume the caller
+      // has already established the household, so neither is ever a client call.
+      "app_choice_principal",
       "app_consume_enrollment_code",
       "app_current_member_id",
       "app_household_today",
@@ -112,6 +118,7 @@ describe("function grants", () => {
       "app_instance_applies_at",
       "app_instance_satisfaction",
       "app_is_school_day",
+      "app_lock_open_job",
       "app_recurrence_applies_at",
       "app_requirement_rows",
       "app_resolve_actor",

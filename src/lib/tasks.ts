@@ -139,3 +139,39 @@ export const tasks = {
       p_expected_version: expectedVersion ?? null,
     }),
 };
+
+/**
+ * Taking a job, and giving it back.
+ *
+ * Deliberately NOT routed through callTransition: these do not move an
+ * instance between states, so they carry no operation id and no expected
+ * version. What they do share is the actor token, which is the whole point —
+ * on a mounted iPad the browser session belongs to a parent and the person
+ * standing there does not, so the token is what says who is choosing.
+ *
+ * The token is passed, never trusted. A resolved token NEVER carries parent
+ * authority, whatever session sits underneath it, so a child cannot name a
+ * sibling here however the call is shaped: the database refuses it.
+ *
+ * `memberId` is for a parent choosing on somebody's behalf from Settings, and
+ * is left null on /me, where the actor is the child.
+ */
+async function callChoice(fn: "choose_job" | "release_job", definitionId: string, memberId?: string) {
+  const actor = getActor();
+  const { error } = await getSupabaseClient().rpc(fn, {
+    p_definition_id: definitionId,
+    p_member_id: memberId ?? null,
+    p_actor_token: actor?.token ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export const jobs = {
+  /** I'll take that one. Safe to tap twice. */
+  choose: (definitionId: string, memberId?: string) =>
+    callChoice("choose_job", definitionId, memberId),
+
+  /** Somebody else can have it. Anything already started stays put. */
+  release: (definitionId: string, memberId?: string) =>
+    callChoice("release_job", definitionId, memberId),
+};

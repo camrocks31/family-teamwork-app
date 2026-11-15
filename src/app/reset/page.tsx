@@ -2,18 +2,53 @@
 
 import { useEffect, useState } from "react";
 import { appUrl, getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { PasswordField } from "@/components/password-field";
 
 /**
  * Set a new password, arrived at from a recovery email.
  *
  * Supabase sends the parent to its own /auth/v1/verify, which redirects here
  * with the session in the URL fragment. The browser client is configured with
- * `detectSessionInUrl`, so by the time it reports a session the recovery is
+ * `detectSessionInUrl`, so by the time it reports a recovery the session is
  * already established and `updateUser` is allowed to change the password.
  *
- * All of this is client-side because there is no server: the page is a static
- * file. Nothing here decides whether the password may change — Supabase does,
- * by checking the recovery token it issued.
+ * ONLY A RECOVERY LINK UNLOCKS THIS FORM (HAL-1554). The first version of
+ * this page accepted any session at all:
+ *
+ *   onAuthStateChange((_event, session) => { if (session) ready() })
+ *
+ * which is a different thing entirely, because onAuthStateChange fires
+ * INITIAL_SESSION with whatever session the browser already had — this repo
+ * says so itself in auth-gate.tsx. On a wall-mounted iPad that restored
+ * session is a PARENT'S, so any child could open this page, type a new
+ * password twice, and own the parent account: no email, no link, and no
+ * knowledge of the old password. Reproduced in a browser, and the
+ * `updateUser` call behind it was confirmed to succeed from an ordinary
+ * password session.
+ *
+ * So the check below is on the EVENT, not on the session. A restored session
+ * reports INITIAL_SESSION and no longer reaches the form, which closes the
+ * only attack a child would actually find: typing the address.
+ *
+ * BUT THIS CHECK IS NOT A SECURITY BOUNDARY, and an earlier version of this
+ * comment wrongly said it was. `redirectType` is `params.type`, read straight
+ * out of the URL by auth-js's `_getSessionFromURL` (cited by function rather
+ * than line, because `node_modules` line numbers drift on every upgrade) —
+ * the access token is
+ * validated, the TYPE IS NOT. So a fragment carrying any valid session's
+ * tokens plus `type=recovery` emits PASSWORD_RECOVERY for a session that
+ * never came near a recovery email. That was demonstrated in a browser
+ * against this built export, not reasoned about. And anyone who can read the
+ * stored token can call `updateUser` from the console anyway, which is what
+ * `src/lib/supabase/client.ts` already says about everything in this bundle:
+ * nothing in the client is an authorization decision.
+ *
+ * THE GUARD IS THE SERVER. `require_current_password` makes Supabase refuse
+ * the change for any session that did not arrive by recovery link, whatever
+ * the URL claimed. It is set in `supabase/config.toml` — which configures the
+ * LOCAL stack only and must never be pushed whole. **Until it is applied to
+ * the hosted project, the deployed site has this UX gate and nothing more.**
+ * See HAL-1554; do not read this page as protected until that is done.
  */
 
 type State =
@@ -43,7 +78,6 @@ export default function ResetPasswordPage() {
       : { kind: "expired", detail: "This hub has no Supabase connection configured." },
   );
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -62,13 +96,24 @@ export default function ResetPasswordPage() {
     }
 
     const supabase = getSupabaseClient();
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) setState({ kind: "ready" });
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      // The EVENT, never merely the presence of a session.
+      if (event === "PASSWORD_RECOVERY" && session) setState({ kind: "ready" });
     });
 
     // A link already used, or opened after it expired, yields no session and
     // no error in the URL. Say so rather than spinning forever.
-    const giveUp = setTimeout(() => {
+    //
+    // But do not say it while a real link is still being checked. Processing a
+    // recovery fragment makes a round trip (`_getSessionFromURL` validates the
+    // access token against /auth/v1/user before the event is emitted), and on
+    // a slow connection that outlasts this timer — which used to show "expired"
+    // and then jump to the form, two contradictory things in a row. auth-js
+    // clears the hash only once the token has been validated, so a hash that
+    // still carries an access token means the answer is genuinely pending.
+    const giveUp = setInterval(() => {
+      if (window.location.hash.includes("access_token")) return;
+      clearInterval(giveUp);
       setState((current) =>
         current.kind === "waiting"
           ? { kind: "expired", detail: "This link has expired or has already been used." }
@@ -77,7 +122,7 @@ export default function ResetPasswordPage() {
     }, 5000);
 
     return () => {
-      clearTimeout(giveUp);
+      clearInterval(giveUp);
       subscription.subscription.unsubscribe();
     };
   }, []);
@@ -91,11 +136,6 @@ export default function ResetPasswordPage() {
       setError("Please use at least 8 characters.");
       return;
     }
-    if (password !== confirm) {
-      setError("Those two passwords do not match.");
-      return;
-    }
-
     setBusy(true);
     const { error: updateError } = await getSupabaseClient().auth.updateUser({ password });
     setBusy(false);
@@ -160,37 +200,14 @@ export default function ResetPasswordPage() {
           onSubmit={handleSubmit}
           className="flex flex-col gap-4 rounded-[var(--radius-card)] border border-line bg-surface p-6"
         >
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="new-password" className="text-sm font-semibold">
-              New password
-            </label>
-            <input
-              id="new-password"
-              name="new-password"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-line"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="confirm-password" className="text-sm font-semibold">
-              Type it again
-            </label>
-            <input
-              id="confirm-password"
-              name="confirm-password"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-line"
-            />
-          </div>
+          <PasswordField
+            id="new-password"
+            label="New password"
+            autoComplete="new-password"
+            value={password}
+            onChange={setPassword}
+            hint="At least 8 characters. Tap Show to check it before you save."
+          />
 
           {error && (
             <p

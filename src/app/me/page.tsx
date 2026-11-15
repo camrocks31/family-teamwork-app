@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AuthGate } from "@/components/auth-gate";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { getActor, type Actor } from "@/lib/kiosk";
-import { TaskConflictError, tasks as taskApi } from "@/lib/tasks";
+import { TaskConflictError, jobs as jobApi, tasks as taskApi } from "@/lib/tasks";
 
 /**
  * My jobs — what this child has to do today, and a button to say it is done.
@@ -34,11 +34,22 @@ interface RewardProgress {
 interface MyTask {
   instance_id: string;
   title: string;
+  /** Why this job exists, in one sentence. From the revision this instance is pinned to. */
+  reason: string | null;
   state: string;
   version: number;
   criteria: string[];
   where: string | null;
   correction_note: string | null;
+}
+
+/** A job nobody has taken, or one this person has. Keyed by DEFINITION, not instance. */
+interface OpenJob {
+  definition_id: string;
+  title: string;
+  reason: string | null;
+  where: string | null;
+  criteria: string[];
 }
 
 export default function MyJobsPage() {
@@ -57,6 +68,15 @@ function MyJobs() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rewards, setRewards] = useState<RewardProgress[]>([]);
+  // Jobs going spare, the ones this person has taken, and how many they are
+  // ASKED to hold. The shortfall is shown and never enforced: a number the app
+  // enforces is not a choice, and locking it would trap a child who wants to
+  // swap one job for another.
+  const [available, setAvailable] = useState<OpenJob[]>([]);
+  const [held, setHeld] = useState<OpenJob[]>([]);
+  const [minChosen, setMinChosen] = useState(0);
+  const [chosenCount, setChosenCount] = useState(0);
+  const [choosing, setChoosing] = useState<string | null>(null);
   // Young or early readers get one job at a time instead of a list. A
   // list of four is a task list to an eleven-year-old and a wall to a
   // seven-year-old; the flag is set by a parent, not guessed from age.
@@ -82,6 +102,7 @@ function MyJobs() {
     type Row = {
       instance_id: string;
       title: string;
+      reason: string | null;
       state: string;
       version: number;
       correction_note: string | null;
@@ -90,15 +111,31 @@ function MyJobs() {
       criteria: string[];
     };
 
-    const payload = (data ?? { jobs: [], simple_view: false }) as {
+    const payload = (data ?? {
+      jobs: [],
+      simple_view: false,
+      available: [],
+      held: [],
+      min_chosen_jobs: 0,
+      chosen_count: 0,
+    }) as {
       simple_view: boolean;
+      min_chosen_jobs: number;
+      chosen_count: number;
+      available: OpenJob[];
+      held: OpenJob[];
       jobs: Row[];
     };
     setSimple(Boolean(payload.simple_view));
+    setMinChosen(payload.min_chosen_jobs ?? 0);
+    setChosenCount(payload.chosen_count ?? 0);
+    setAvailable(payload.available ?? []);
+    setHeld(payload.held ?? []);
     const rows = payload.jobs ?? [];
     const shape = (r: Row): MyTask => ({
       instance_id: r.instance_id,
       title: r.title,
+      reason: r.reason,
       state: r.state,
       version: r.version,
       where: r.where,
@@ -154,6 +191,32 @@ function MyJobs() {
       void supabase.removeChannel(channel);
     };
   }, [load]);
+
+  async function take(job: OpenJob) {
+    setChoosing(job.definition_id);
+    setError(null);
+    try {
+      await jobApi.choose(job.definition_id);
+      if (actor) await load(actor.memberId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChoosing(null);
+    }
+  }
+
+  async function giveBack(job: OpenJob) {
+    setChoosing(job.definition_id);
+    setError(null);
+    try {
+      await jobApi.release(job.definition_id);
+      if (actor) await load(actor.memberId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChoosing(null);
+    }
+  }
 
   async function markDone(task: MyTask) {
     setBusyId(task.instance_id);
@@ -262,6 +325,16 @@ function MyJobs() {
         </section>
       )}
 
+      <ChoiceSection
+        available={available}
+        held={held}
+        minChosen={minChosen}
+        chosenCount={chosenCount}
+        choosing={choosing}
+        onTake={take}
+        onGiveBack={giveBack}
+      />
+
       {simple ? (
         <SimpleView
           mine={myTasks}
@@ -336,7 +409,8 @@ function SimpleView({
         <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold">
           {next.title}
         </h2>
-        {next.where && <p className="mt-1 text-muted">{next.where}</p>}
+        {next.reason && <p className="mt-1.5 text-base text-muted">{next.reason}</p>}
+        {next.where && <p className="mt-1 text-sm text-muted">{next.where}</p>}
 
         {next.correction_note && (
           <p className="mt-3 rounded-xl border border-attention-line bg-surface px-3 py-2 text-sm text-attention-ink">
@@ -366,6 +440,119 @@ function SimpleView({
           {busyId === next.instance_id ? "Saving…" : "I did it"}
         </button>
       </div>
+    </section>
+  );
+}
+
+/**
+ * The jobs you chose, and the ones going spare.
+ *
+ * Choice is the lever this whole section exists for. The same work gets done
+ * either way; what changes is whether it arrived or was picked up. So the
+ * shortfall is STATED and never enforced — no disabled buttons, no blocking,
+ * no scolding. A parent can see the gap too, and a conversation is a better
+ * instrument than a lock.
+ *
+ * Giving a job back is offered for everything held, including a job already
+ * finished today, because `held` comes from the assignments rather than from
+ * today's list — which hides completed work.
+ */
+function ChoiceSection({
+  available,
+  held,
+  minChosen,
+  chosenCount,
+  choosing,
+  onTake,
+  onGiveBack,
+}: {
+  available: OpenJob[];
+  held: OpenJob[];
+  minChosen: number;
+  chosenCount: number;
+  choosing: string | null;
+  onTake: (job: OpenJob) => void;
+  onGiveBack: (job: OpenJob) => void;
+}) {
+  if (available.length === 0 && held.length === 0 && minChosen === 0) return null;
+  const short = Math.max(minChosen - chosenCount, 0);
+
+  return (
+    <section className="mt-8">
+      <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold">
+        Jobs you pick yourself
+      </h2>
+
+      {minChosen > 0 && (
+        <p className="mt-1 text-muted">
+          {short === 0
+            ? `You've taken all ${minChosen}.`
+            : `${minChosen} of these are yours to choose — ${short} to go.`}
+        </p>
+      )}
+
+      {held.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-3">
+          {held.map((j) => (
+            <li
+              key={j.definition_id}
+              className="rounded-[var(--radius-card)] border border-[color:var(--color-done)]/30 bg-done-wash p-4"
+            >
+              <p className="font-[family-name:var(--font-display)] text-lg font-semibold">
+                {j.title}
+              </p>
+              {j.reason && <p className="mt-0.5 text-sm text-muted">{j.reason}</p>}
+              {j.where && <p className="text-sm text-muted">{j.where}</p>}
+              <p className="mt-1 text-sm font-semibold">Yours</p>
+              <button
+                type="button"
+                disabled={choosing === j.definition_id}
+                onClick={() => onGiveBack(j)}
+                className="mt-3 min-h-[44px] rounded-xl border border-line px-3 text-sm font-semibold disabled:opacity-60"
+              >
+                {choosing === j.definition_id ? "Saving…" : "Give it back"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {available.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-3">
+          {available.map((j) => (
+            <li
+              key={j.definition_id}
+              className="rounded-[var(--radius-card)] border border-dashed border-line bg-surface p-4"
+            >
+              <p className="font-[family-name:var(--font-display)] text-lg font-semibold">
+                {j.title}
+              </p>
+              {j.reason && <p className="mt-0.5 text-sm text-muted">{j.reason}</p>}
+              {j.where && <p className="text-sm text-muted">{j.where}</p>}
+              {j.criteria.length > 0 && (
+                <ul className="mt-2 flex flex-col gap-1">
+                  {j.criteria.map((c, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-muted">
+                      <span aria-hidden="true">·</span>
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                disabled={choosing === j.definition_id}
+                onClick={() => onTake(j)}
+                className="mt-3 min-h-[48px] w-full rounded-2xl bg-accent font-[family-name:var(--font-display)] text-base font-semibold text-white disabled:opacity-60"
+              >
+                {choosing === j.definition_id ? "Saving…" : "I'll take this one"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        held.length === 0 && <p className="mt-3 text-muted">Nothing going spare just now.</p>
+      )}
     </section>
   );
 }
@@ -430,6 +617,7 @@ function TaskList({
               <p className="font-[family-name:var(--font-display)] text-lg font-semibold">
                 {t.title}
               </p>
+              {t.reason && <p className="mt-0.5 text-sm text-muted">{t.reason}</p>}
               {t.where && <p className="text-sm text-muted">{t.where}</p>}
 
               {t.correction_note && (
