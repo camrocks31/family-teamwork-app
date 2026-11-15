@@ -17,6 +17,16 @@ export interface Person {
   role: "parent" | "child";
   avatar_emoji: string | null;
   accent_color?: string | null;
+  /**
+   * How they are doing, shown on their own tile.
+   *
+   * This used to be a SECOND row of the same five faces further down the
+   * page — the picker above, the status grid below — so the dashboard opened
+   * with the family printed twice and, on a phone, you scrolled through both
+   * before reaching anything. One row carries both jobs now.
+   */
+  own_outstanding?: number;
+  own_total?: number;
 }
 
 /**
@@ -131,11 +141,36 @@ export function WhoAmI({
               <span className="font-[family-name:var(--font-display)] font-semibold">
                 {p.display_name}
               </span>
+              <PersonStanding person={p} />
             </button>
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+/**
+ * One line under a face: what this person still owes.
+ *
+ * "all done" is only honest when they HAD something to do. With nothing of
+ * their own today it says so, because otherwise five green ticks sit above an
+ * untouched house.
+ */
+function PersonStanding({ person }: { person: Person }) {
+  if (person.own_total === undefined) return null;
+  if (person.own_total === 0) {
+    return <span className="text-xs font-medium text-muted">nothing of their own</span>;
+  }
+  if (person.own_outstanding === 0) {
+    return (
+      <span className="text-xs font-semibold text-[color:var(--color-done)]">all done</span>
+    );
+  }
+  return (
+    <span className="text-xs font-semibold text-attention-ink">
+      {person.own_outstanding} left
+    </span>
   );
 }
 

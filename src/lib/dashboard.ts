@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import type { ReadinessResult, SpaceResult } from "@/lib/readiness";
+import type { Participation, ReadinessResult, SpaceResult } from "@/lib/readiness";
 
 export interface DashboardMember {
   id: string;
@@ -10,6 +10,10 @@ export interface DashboardMember {
   role: "parent" | "child";
   avatar_emoji: string | null;
   accent_color: string | null;
+  /** The family's own reading order, not alphabetical. Never a ranking. */
+  display_order: number;
+  /** Whether this person sees one job at a time rather than a list. */
+  simple_view: boolean;
   /** Outstanding tasks that are this member's own, not the household's. */
   own_outstanding: number;
   /** How many of their own apply at all right now. Zero is not "all done". */
@@ -32,6 +36,12 @@ export interface DashboardActivity {
   id: string;
   name: string;
   icon: string | null;
+  participation: Participation;
+  /**
+   * One entry per child in the activity's AUDIENCE, not per child in the
+   * house. An activity nobody is named for is offered to everyone, which is
+   * what every activity meant before audiences existed.
+   */
   per_member: ReadinessResult[];
 }
 

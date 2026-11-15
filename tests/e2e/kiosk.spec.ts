@@ -23,7 +23,14 @@ const PIN = "2468";
 // RESTRICT — so this test identifies its own rather than assuming it is
 // the only one. The first version deleted blindly, did not check the
 // error, and then asserted the table held exactly one row.
-const LABEL = `Test iPad ${Date.now()}`;
+//
+// One stamp for the whole run, so teardown can find everything this file made
+// by suffix. Each test used to call Date.now() for itself and nothing was
+// ever deleted, so every run left a "Utility Room <ms>" in the house list and
+// a "Film night <ms>" in the rewards — visible on the real dashboard, and
+// growing by one per run until the next db:reset.
+const RUN = Date.now();
+const LABEL = `Test iPad ${RUN}`;
 
 let admin: SupabaseClient;
 let householdId: string;
@@ -80,6 +87,53 @@ test.beforeAll(async () => {
     .single();
   today = new Intl.DateTimeFormat("en-CA", { timeZone: household!.timezone }).format(new Date());
 
+});
+
+
+/**
+ * Put the house back.
+ *
+ * Every fixture this file creates is suffixed with RUN, so teardown can find
+ * them without guessing. Deliberately best-effort: a cleanup failure must not
+ * fail a suite that has already proved what it set out to prove, and the
+ * order below matters because the task tables reference each other with
+ * RESTRICT. Devices are left alone on purpose — member_sessions holds them.
+ */
+test.afterAll(async () => {
+  try {
+    const suffix = ` ${RUN}`;
+    await admin.from("rewards").delete().like("name", `%${suffix}`);
+
+    const { data: defs } = await admin
+      .from("task_definition_revisions")
+      .select("definition_id")
+      .like("title", `%${suffix}`);
+    const ids = [...new Set((defs ?? []).map((d) => d.definition_id as string))];
+    if (ids.length > 0) {
+      // The definition points at its current revision, so that pointer has to
+      // let go before the revisions can be removed.
+      await admin.from("task_definitions").update({ current_revision_id: null }).in("id", ids);
+      await admin.from("task_photos").delete().in("task_instance_id",
+        ((await admin.from("task_instances").select("id").in("definition_id", ids)).data ?? [])
+          .map((r) => r.id as string));
+      await admin.from("task_events").delete().in("task_instance_id",
+        ((await admin.from("task_instances").select("id").in("definition_id", ids)).data ?? [])
+          .map((r) => r.id as string));
+      await admin.from("task_instances").delete().in("definition_id", ids);
+      await admin.from("task_assignments").delete().in("definition_id", ids);
+      await admin.from("requirement_group_items").delete().in("target_definition_id", ids);
+      const { data: revs } = await admin
+        .from("task_definition_revisions").select("id").in("definition_id", ids);
+      await admin.from("task_definition_criteria").delete()
+        .in("revision_id", (revs ?? []).map((r) => r.id as string));
+      await admin.from("task_definition_revisions").delete().in("definition_id", ids);
+      await admin.from("task_definitions").delete().in("id", ids);
+    }
+
+    await admin.from("household_spaces").delete().like("name", `%${suffix}`);
+  } catch {
+    // Left behind rather than failing the run. The next db:reset clears it.
+  }
 });
 
 test("a parent sets up the tablet and a PIN, then a child logs their own job", async ({
@@ -199,8 +253,8 @@ test("a parent adds a room and a job, and the job appears for the family", async
   // The brief's standing requirement: rooms, tasks and their criteria are
   // editable data, never hard-coded. Until this screen existed they were
   // editable in principle — by writing SQL.
-  const room = `Utility Room ${Date.now()}`;
-  const job = `Sweep the floor ${Date.now()}`;
+  const room = `Utility Room ${RUN}`;
+  const job = `Sweep the floor ${RUN}`;
 
   await page.goto("/");
   await page.getByLabel("Email").fill(EMAIL);
@@ -263,10 +317,10 @@ test("a reward a parent sets up shows up as progress on the child's screen", asy
   // child sees and the work they did cannot drift apart. This walks it: a
   // parent creates one, the child sees progress, does a job, and the number
   // moves.
-  const reward = `Film night ${Date.now()}`;
+  const reward = `Film night ${RUN}`;
   // Unique per run: each run inserts its own job, and a fixed title would
   // match every previous run's leftovers.
-  const ownJob = `Water bottle ${Date.now()}`;
+  const ownJob = `Water bottle ${RUN}`;
 
   const { error: resetError } = await admin
     .from("task_instances")
@@ -332,7 +386,7 @@ test("a reward a parent sets up shows up as progress on the child's screen", asy
   // tablet the earlier test enrolled: the device id lives in localStorage.
   // The PIN does live in the database, but setting it again keeps this test
   // standalone.
-  await page.getByLabel("What should this tablet be called?").fill(`Reward iPad ${Date.now()}`);
+  await page.getByLabel("What should this tablet be called?").fill(`Reward iPad ${RUN}`);
   await page.getByRole("button", { name: "Set up this tablet" }).click();
   await expect(page.getByRole("main").getByRole("status")).toContainText(/set up/i);
   await page.getByLabel("New PIN", { exact: false }).first().fill(PIN);

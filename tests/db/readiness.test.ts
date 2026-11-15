@@ -368,19 +368,30 @@ describe("review, exemption and permission (AC9, AC10, AC11)", () => {
       // Everything is done, and the answer is still "you may ask".
       expect((await readiness(children[0].id, games, at)).status).toBe("ready_to_ask");
 
+      // The window is anchored to the MOMENT UNDER TEST, not to now().
+      //
+      // It used to be `now() - interval '1 hour'`, while the evaluation is
+      // pinned to WEEKEND at 14:00 — a fixed date. So the fixture only
+      // covered the evaluated moment while the wall clock happened to sit
+      // within an hour after it, and the file passed all afternoon on the
+      // 14th and failed from 15:00 onwards. Same defect as the school-morning
+      // tests: a fixture built from now() judged at a fixed instant.
       const { rows: grant } = await pool.query<{ id: string }>(
         `insert into activity_grants
            (household_id, activity_id, member_id, granted_by, valid_from, valid_until)
-         values ($1, $2, $3, $4, now() - interval '1 hour', now() + interval '1 day')
+         values ($1, $2, $3, $4,
+                 $5::timestamptz - interval '1 hour',
+                 $5::timestamptz + interval '1 day')
          returning id`,
-        [parent.householdId, games, children[0].id, parent.memberId],
+        [parent.householdId, games, children[0].id, parent.memberId, at],
       );
       expect((await readiness(children[0].id, games, at)).status).toBe("approved");
 
       // And a grant that has run out stops counting.
       await pool.query(
-        `update activity_grants set valid_until = now() - interval '1 minute' where id = $1`,
-        [grant[0].id],
+        `update activity_grants set valid_until = $2::timestamptz - interval '1 minute'
+          where id = $1`,
+        [grant[0].id, at],
       );
       expect((await readiness(children[0].id, games, at)).status).toBe("ready_to_ask");
       await pool.query(`delete from activity_grants where id = $1`, [grant[0].id]);

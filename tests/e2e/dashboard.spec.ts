@@ -132,10 +132,23 @@ test("a parent sees the household: people, rooms, activities, the pet and shoppi
 }) => {
   await signIn(page);
 
-  await expect(page.getByRole("heading", { name: "The house", exact: false })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Play Video Games" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Watch TV" })).toBeVisible();
+  // `exact`, because the shared-blocker panel's heading also begins "The
+  // house" ("The house needs 3 things") and a loose match hits both.
+  await expect(page.getByRole("heading", { name: "The house", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dog" })).toBeVisible();
+
+  // The board is arranged BY PERSON now, so each child is a heading and the
+  // activities are named inside their card. Asserting a heading per activity
+  // is what pinned the old shape — two cards whose contents were identical.
+  await expect(page.getByRole("heading", { name: "Child One" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Child Two" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Child Three" })).toBeVisible();
+
+  // And an activity appears once per person who is offered it — never twice
+  // for the same person, which is the defect this layout exists to remove.
+  const inChildOne = page.getByRole("region", { name: "Child One" });
+  await expect(inChildOne.getByText("Play Video Games")).toHaveCount(1);
+  await expect(inChildOne.getByText("Watch TV")).toHaveCount(1);
   // .first(): a room name now appears on its house chip AND on the shared
   // blocker chips above the per-child tiles.
   await expect(page.getByText("Children's Bedroom").first()).toBeVisible();
@@ -156,9 +169,11 @@ test("every status is written out, not just coloured", async ({ page }) => {
 test("a blocker links through to the room it names", async ({ page }) => {
   await signIn(page);
 
-  // Scoped to an activity card, so this follows a BLOCKER rather than a room
-  // chip — the journey the brief describes is tapping "why can't I play?".
-  const card = page.getByRole("region", { name: "Play Video Games" });
+  // Scoped to the shared-blocker panel, so this follows a BLOCKER rather than
+  // a room chip — the journey the brief describes is tapping "why can't I
+  // play?". The panel replaced the per-activity cards: the house's own work
+  // is one fact about the house, so it is stated once for everybody.
+  const card = page.getByRole("region", { name: /The house needs/ });
   const blocker = card.getByRole("link").first();
   await expect(blocker).toBeVisible();
   const blockerText = (await blocker.textContent())!;
@@ -229,7 +244,7 @@ test("works at phone width without sideways scrolling", async ({ page }) => {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
-  await expect(page.getByRole("heading", { name: "Play Video Games" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Child One" })).toBeVisible();
 });
 
 test("the hub creates the day itself when nobody has opened it yet", async ({ page }) => {
@@ -273,10 +288,19 @@ test("the hub creates the day itself when nobody has opened it yet", async ({ pa
   await signIn(page);
 
   // The house reports real work, not an empty day dressed up as a finished one.
+  //
+  // Waiting for the NUMBER, not just the element. fetchDashboard evaluates,
+  // then materializes, then evaluates again — so the first paint legitimately
+  // says "0 of 0" for a moment, and reading textContent the instant the
+  // element appears caught that intermediate frame. It passed or failed
+  // depending on how busy the machine was, which is the worst kind of test.
   const progress = page.getByText(/\d+ of \d+ jobs done/);
-  await expect(progress).toBeVisible();
+  await expect(
+    progress,
+    "the dashboard should have created today's tasks",
+  ).toHaveText(/of [1-9]\d* jobs done/, { timeout: 15_000 });
   const total = Number((await progress.textContent())!.match(/of (\d+)/)![1]);
-  expect(total, "the dashboard should have created today's tasks").toBeGreaterThan(0);
+  expect(total).toBeGreaterThan(0);
 
   const { count: after } = await admin
     .from("task_instances")
@@ -285,26 +309,47 @@ test("the hub creates the day itself when nobody has opened it yet", async ({ pa
   expect(after).toBeGreaterThan(0);
 });
 
-test("each activity tile says whose it is", async ({ page }) => {
-  // Three tiles that happen to agree are indistinguishable from the same list
-  // printed three times, which is how this read on the wall.
+test("nothing is printed twice: each person once, each activity once inside them", async ({
+  page,
+}) => {
+  // The regression guard for the defect that prompted this layout.
+  //
+  // The dashboard used to render one card per activity with a tile per child
+  // inside it, so "Play Video Games" and "Watch TV" came out as two cards
+  // with byte-for-byte identical contents — the same house jobs, the same
+  // three children, the same verdict three times each. The axis is now the
+  // person, and this asserts the two properties that keep it that way.
   await signIn(page);
-  const card = page.getByRole("region", { name: "Play Video Games" });
-  await expect(card).toBeVisible();
 
-  // Every child the activity was evaluated for is named inside the card, so
-  // three tiles can never again read as one list repeated.
   const { data: children } = await admin
     .from("family_members")
     .select("display_name")
     .eq("household_id", householdId)
-    .eq("role", "child");
+    .eq("role", "child")
+    .eq("is_active", true);
   expect(children!.length).toBeGreaterThan(1);
+
   for (const child of children!) {
-    await expect(
-      card.getByText(child.display_name, { exact: false }).first(),
-      `${child.display_name} should be named on their own tile`,
-    ).toBeVisible();
+    // Exactly one card per person. Two would be the old defect wearing a
+    // different hat.
+    const card = page.getByRole("region", { name: child.display_name });
+    await expect(card).toHaveCount(1);
+
+    // And inside it, an activity's name appears at most once. Activities
+    // sharing a condition are grouped under one heading rather than repeated,
+    // so this holds however many of them there are.
+    const { data: activities } = await admin
+      .from("activities")
+      .select("name")
+      .eq("household_id", householdId)
+      .eq("is_active", true);
+    for (const activity of activities!) {
+      const occurrences = await card.getByText(activity.name, { exact: true }).count();
+      expect(
+        occurrences,
+        `"${activity.name}" should appear at most once inside ${child.display_name}'s card`,
+      ).toBeLessThanOrEqual(1);
+    }
   }
 });
 
@@ -376,5 +421,48 @@ test("no blocker on the dashboard points at a page that does not exist", async (
   for (const href of hrefs) {
     const path = href.split("?")[0];
     expect(routes, `${href} is not a page in this app`).toContain(path);
+  }
+});
+
+test("a parent gives one child their own activity, and only that child sees it", async ({
+  page,
+}) => {
+  // The journey the catalogue exists for. Before it, every activity was
+  // offered to every child, so two activities produced two identical cards —
+  // and the only way to change that was to edit the database by hand.
+  const name = `Trampoline ${Date.now()}`;
+  const { data: kids } = await admin
+    .from("family_members")
+    .select("id, display_name")
+    .eq("household_id", householdId)
+    .eq("role", "child")
+    .eq("is_active", true)
+    .order("display_order");
+  const [mine, theirs] = kids!;
+
+  try {
+    await signIn(page);
+    await page.goto("/settings/");
+    await page.getByRole("button", { name: "Add an activity" }).click();
+    await page.getByPlaceholder("PlayStation on your own").fill(name);
+    await page.getByRole("button", { name: mine.display_name, exact: false }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText(`${name} is saved.`)).toBeVisible();
+
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: mine.display_name })).toBeVisible();
+
+    const ownCard = page.getByRole("region", { name: mine.display_name });
+    await expect(ownCard.getByText(name, { exact: true })).toHaveCount(1);
+
+    const otherCard = page.getByRole("region", { name: theirs.display_name });
+    await expect(otherCard.getByText(name, { exact: true })).toHaveCount(0);
+  } finally {
+    const { data: made } = await admin.from("activities").select("id").eq("name", name);
+    for (const a of made ?? []) {
+      await admin.from("activity_audience").delete().eq("activity_id", a.id);
+      await admin.from("activity_requirements").delete().eq("activity_id", a.id);
+      await admin.from("activities").delete().eq("id", a.id);
+    }
   }
 });

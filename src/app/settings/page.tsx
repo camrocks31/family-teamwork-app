@@ -9,6 +9,7 @@ import { SettingsRooms, type Space } from "@/components/settings-rooms";
 import { SettingsTasks } from "@/components/settings-tasks";
 import { SettingsRewards } from "@/components/settings-rewards";
 import { SettingsSkins } from "@/components/settings-skins";
+import { SettingsActivities } from "@/components/settings-activities";
 import { MemberBadge } from "@/components/member-badge";
 
 /**
@@ -66,9 +67,12 @@ function Settings() {
 
     const { data: people, error: peopleError } = await supabase
       .from("family_members")
-      .select("id, display_name, role, avatar_emoji, accent_color, simple_view")
+      .select("id, display_name, role, avatar_emoji, accent_color, simple_view, display_order")
       .eq("is_active", true)
-      .order("role")
+      // The family's own order, as on the dashboard. Ordering by name put
+      // them in alphabetical order — "Child One, Child Three, Child Two" —
+      // which reads as random to anyone who knows them.
+      .order("display_order")
       .order("display_name");
     if (peopleError) throw new Error(peopleError.message);
 
@@ -306,15 +310,23 @@ function Settings() {
         />
       )}
 
+      <SettingsActivities
+        members={members}
+        onError={setError}
+        onNote={(m) => {
+          setNote(m);
+          void load();
+        }}
+      />
+
       <section className="mt-10 rounded-[var(--radius-card)] border border-line bg-surface p-4">
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Not here yet
         </h2>
         <p className="mt-1 text-sm text-muted">
-          Choosing what each activity requires — which rooms and jobs have
-          to be done before Play Video Games or Watch TV is allowed. That
-          is still set in the database, not here. Also shopping and the
-          calendar.
+          Building a new set of jobs from scratch — the sets above can be
+          attached to an activity, but not yet created or renamed here. Also
+          shopping and the calendar.
         </p>
       </section>
 

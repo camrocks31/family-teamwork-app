@@ -47,7 +47,9 @@ const AUTHENTICATED_MAY_EXECUTE = [
   "return_task_instance",
   "revoke_device",
   "revoke_member_session",
+  "save_activity",
   "save_task",
+  "set_activity_active",
   "set_task_active",
   "set_member_pin",
   "start_task_instance",
@@ -98,6 +100,10 @@ describe("function grants", () => {
     // level security, so reaching them from another household's session would
     // have read across the tenant boundary the schema is built on.
     const internal = [
+      // Takes an activity id and bypasses RLS to answer which children it is
+      // for. Granted to `authenticated` it returned another household's
+      // children by id alone, so it belongs here rather than in the list above.
+      "app_activity_audience",
       "app_apply_transition",
       "app_consume_enrollment_code",
       "app_current_member_id",

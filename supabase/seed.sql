@@ -90,13 +90,21 @@ begin
   returning id into v_household;
 
   -- Members. Two parents, three children, placeholder names.
-  insert into family_members (household_id, display_name, role, avatar_emoji, accent_color)
+  --
+  -- display_order is set here as well as backfilled by the migration, because
+  -- the migration only reaches members that already exist. A fresh `db:reset`
+  -- runs the migrations against an empty database and then seeds, so without
+  -- these numbers every member would keep the default 0 and the dashboard
+  -- would fall back to alphabetical — "Child One, Child Three, Child Two",
+  -- which is the ordering this column exists to stop.
+  insert into family_members
+    (household_id, display_name, role, avatar_emoji, accent_color, display_order)
   values
-    (v_household, 'Parent One', 'parent', '🧑', '#6D4FB0'),
-    (v_household, 'Parent Two', 'parent', '🧑', '#2E7D52'),
-    (v_household, 'Child One',  'child',  '🙂', '#B4700E'),
-    (v_household, 'Child Two',  'child',  '🙂', '#2E7D52'),
-    (v_household, 'Child Three','child',  '🙂', '#6D4FB0');
+    (v_household, 'Parent One', 'parent', '🧑', '#6D4FB0', 10),
+    (v_household, 'Parent Two', 'parent', '🧑', '#2E7D52', 20),
+    (v_household, 'Child One',  'child',  '🙂', '#B4700E', 30),
+    (v_household, 'Child Two',  'child',  '🙂', '#2E7D52', 40),
+    (v_household, 'Child Three','child',  '🙂', '#6D4FB0', 50);
 
   insert into pets (household_id, name, species, avatar_emoji)
   values (v_household, 'Dog', 'dog', '🐕')

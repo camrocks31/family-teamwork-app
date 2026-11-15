@@ -38,11 +38,32 @@ export interface Blocker {
   title: string;
   group_id: string;
   group_name: string;
+  /**
+   * Whose work this is. `household` belongs to the house and is counted once
+   * however many people an activity is evaluated for; `requester` belongs to
+   * one person, named below.
+   */
+  scope: "household" | "requester";
+  /** The person this job belongs to, or null when it is the house's. */
+  for_member_id: string | null;
+  for_member_name: string | null;
+  /** Whether that person is the one asking. False means a teammate. */
+  is_self: boolean;
 }
+
+/**
+ * 'solo' unlocks on your own work. 'team' waits for every child in the
+ * audience — which is what makes helping your brother finish the fastest
+ * route to your own evening rather than a way to lose a race.
+ */
+export type Participation = "solo" | "team";
 
 export interface ReadinessResult {
   status: ReadinessStatus;
   activity: { id: string; name: string; icon: string | null };
+  participation: Participation;
+  /** The children this activity is offered to at all. */
+  audience: { member_id: string; display_name: string }[];
   member_id: string;
   evaluated_at: string;
   local_date: string;

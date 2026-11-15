@@ -3,18 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { WhoAmI } from "@/components/who-am-i";
-import { MemberBadge, memberColour, type BadgePerson } from "@/components/member-badge";
+import { PeopleBoard } from "@/components/people-board";
 import type { Actor } from "@/lib/kiosk";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import type { Blocker } from "@/lib/readiness";
 import {
   useDashboard,
-  type DashboardActivity,
   type DashboardFloor,
   type DashboardPayload,
   type PetCare,
 } from "@/lib/dashboard";
-import type { ReadinessResult, SpaceStatus } from "@/lib/readiness";
+import type { SpaceStatus } from "@/lib/readiness";
 
 /**
  * The mounted-iPad dashboard.
@@ -155,45 +153,15 @@ export function Dashboard() {
         </div>
       </div>
 
-      <section aria-label="Family" className="mt-6">
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {data.members.map((m) => (
-            <li
-              key={m.id}
-              className="flex flex-col items-center gap-1.5 rounded-[var(--radius-card)] border border-line border-b-[3px] bg-surface px-3 py-4"
-            >
-              <MemberBadge person={m} size="lg" />
-              <span className="font-[family-name:var(--font-display)] text-base font-semibold">
-                {m.display_name}
-              </span>
-              {/* "all done" is only honest when they HAD something to do.
-                  With nothing of their own today, say so — otherwise five
-                  green ticks sit above an untouched house. */}
-              <span
-                className={
-                  m.own_total === 0
-                    ? "text-xs font-medium text-muted"
-                    : m.own_outstanding === 0
-                      ? "text-xs font-medium text-[color:var(--color-done)]"
-                      : "text-xs font-medium text-attention-ink"
-                }
-              >
-                {m.own_total === 0
-                  ? "nothing of their own"
-                  : m.own_outstanding === 0
-                    ? "all done"
-                    : `${m.own_outstanding} left`}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {/* No second row of faces here.
+          The dashboard used to render the family twice — the picker above,
+          and a status grid in this spot — so it opened with five identical
+          tiles, then five more. Each person's standing now rides on their own
+          tile in the picker, and the board below is arranged by person. */}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[1.45fr_1fr]">
         <div className="flex flex-col gap-5">
-          {data.activities.map((a) => (
-            <ActivityCard key={a.id} activity={a} members={data.members} />
-          ))}
+          <PeopleBoard data={data} />
           <HouseCard data={data} />
         </div>
 
@@ -252,191 +220,6 @@ function Header({ data }: { data: DashboardPayload }) {
         </button>
       </div>
     </header>
-  );
-}
-
-function ActivityCard({
-  activity,
-  members,
-}: {
-  activity: DashboardActivity;
-  members: BadgePerson[];
-}) {
-  // One tile per child: the same activity is legitimately ready for one and
-  // not another, so a single household answer would be wrong for someone.
-  //
-  // Each tile MUST name its child. Unlabelled, three tiles that happen to
-  // agree read as the same list printed three times — which is how this
-  // first looked on the wall, and a fair reading of it.
-  const nameOf = new Map(members.map((m) => [m.id, m]));
-  const shared = sharedBlockers(activity);
-  const sharedKeys = new Set(shared.map(blockerKey));
-  return (
-    <section
-      aria-labelledby={`activity-${activity.id}`}
-      className="rounded-[var(--radius-card)] border border-line bg-surface p-5"
-    >
-      <h2
-        id={`activity-${activity.id}`}
-        className="flex items-center gap-3 font-[family-name:var(--font-display)] text-xl font-semibold"
-      >
-        <span aria-hidden="true" className="text-2xl">
-          {activity.icon}
-        </span>
-        {activity.name}
-      </h2>
-      {/* Shared blockers once, under the house; personal ones per child.
-          Rendering a full list per child printed the same three dog jobs
-          three times — about 80% of the card was duplication, and it buried
-          the part that actually differs. */}
-      {shared.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-attention-line bg-attention-wash p-4">
-          <p className="font-[family-name:var(--font-display)] text-sm font-semibold text-attention-ink">
-            The house needs {shared.length}
-            {shared.length === 1 ? " thing" : " things"}
-          </p>
-          <ul className="mt-2 flex flex-wrap gap-2">
-            {shared.map((b) => (
-              <li key={`${b.link_kind}-${b.link_id}`}>
-                <Link
-                  href={blockerHref(b)}
-                  className="inline-flex min-h-[36px] items-center rounded-full border border-attention-line bg-surface px-3 text-xs font-semibold text-attention-ink"
-                >
-                  {b.link_name}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <ul className="mt-3 grid gap-3 sm:grid-cols-3">
-        {activity.per_member.map((r) => (
-          <li key={r.member_id}>
-            <ReadinessTile
-              result={r}
-              member={nameOf.get(r.member_id)}
-              sharedCount={shared.length}
-              personal={personalOnly(r, sharedKeys)}
-            />
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-/** A blocker's identity, for telling shared ones from personal ones. */
-function blockerKey(b: Blocker): string {
-  return `${b.link_kind}:${b.link_id}`;
-}
-
-/**
- * The blockers every child has in common — the house's work rather than
- * anyone's own. Shown once above, and stripped from each child's tile.
- */
-function sharedBlockers(activity: DashboardActivity): Blocker[] {
-  const tiles = activity.per_member;
-  if (tiles.length === 0) return [];
-  const [first, ...rest] = tiles;
-  return first.blocking.filter((b) =>
-    rest.every((t) => t.blocking.some((o) => blockerKey(o) === blockerKey(b))),
-  );
-}
-
-function personalOnly(result: ReadinessResult, sharedKeys: Set<string>): Blocker[] {
-  return result.blocking.filter((b) => !sharedKeys.has(blockerKey(b)));
-}
-
-function ReadinessTile({
-  result,
-  member,
-  sharedCount = 0,
-  personal,
-}: {
-  result: ReadinessResult;
-  member?: BadgePerson;
-  sharedCount?: number;
-  /** This child's own blockers, with the house's already stripped out. */
-  personal?: Blocker[];
-}) {
-  const ready = result.status === "ready_to_ask" || result.status === "approved";
-  const own = personal ?? result.blocking;
-
-  // The verdict, not the inventory. "13 things left" is a single
-  // demoralising number with no shape — it says nothing about what to do
-  // next or how long any of it takes. Say yes, or say how far away yes is,
-  // and distinguish this child's own work from the whole house's.
-  const label = ready
-    ? result.status === "approved"
-      ? "Yes — go ahead"
-      : "Yes, you can"
-    : result.status === "temporarily_unavailable"
-      ? "Not right now"
-      : own.length > 0
-        ? `${own.length} of yours`
-        : sharedCount > 0
-          ? "Just the house"
-          : "Not yet";
-
-  return (
-    <div
-      className={`h-full rounded-2xl border p-3 ${
-        ready
-          ? "border-[color:var(--color-done)]/30 bg-done-wash"
-          : "border-attention-line bg-attention-wash"
-      }`}
-    >
-      {member && (
-        <p
-          className="mb-1.5 flex items-center gap-2 font-[family-name:var(--font-display)] text-sm font-semibold"
-          style={{ color: memberColour(member) }}
-        >
-          <MemberBadge person={member} size="sm" />
-          {member.display_name}
-        </p>
-      )}
-      <p className="flex items-center gap-2">
-        <span
-          aria-hidden="true"
-          className={`h-2 w-2 flex-none rounded-full ${
-            ready ? "bg-[color:var(--color-done)]" : "bg-[color:var(--color-attention)]"
-          }`}
-        />
-        <span
-          className={`text-sm font-semibold ${
-            ready ? "text-[color:var(--color-done)]" : "text-attention-ink"
-          }`}
-        >
-          {label}
-        </span>
-      </p>
-
-      {result.reasons.length > 0 && (
-        <p className="mt-1.5 text-xs text-muted">{result.reasons[0]}</p>
-      )}
-
-      {own.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-1.5">
-          {own.slice(0, 3).map((b, i) => (
-            <li key={`${b.link_id}-${i}`}>
-              <Link
-                href={blockerHref(b)}
-                className="flex min-h-[32px] items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-strong"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true" className="flex-none">
-                  <path d="M9 18l6-6-6-6" />
-                </svg>
-                {b.reason}
-              </Link>
-            </li>
-          ))}
-          {own.length > 3 && (
-            <li className="text-xs text-muted">and {own.length - 3} more</li>
-          )}
-        </ul>
-      )}
-    </div>
   );
 }
 
@@ -597,16 +380,3 @@ function ShoppingCard({ items }: { items: DashboardPayload["shopping"] }) {
   );
 }
 
-/**
- * Where a blocker should actually send someone.
- *
- * Anything that was not a room used to go to /tasks/, which is not a route in
- * this app — so most of a school morning's blockers, Lucy's four jobs
- * included, were dead links on the main screen.
- */
-function blockerHref(b: Blocker): string {
-  if (b.link_kind === "space") return `/house/?space=${b.link_id}`;
-  if (b.link_kind === "pet") return "/lucy/";
-  // A personal job: My jobs lists both their own and the shared ones.
-  return "/me/";
-}
