@@ -158,6 +158,57 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
+      - name: The hosted database can serve what we are about to publish
+        # HAL-1556, and the reason this job now talks to the hosted project at
+        # all. On 2026-11-15 this pipeline published a bundle that selected
+        # four columns the hosted database did not have, and /settings answered
+        # 42703 to every one of them. The run was GREEN, and correctly so:
+        # every check in `check` runs against a LOCAL stack, where everything
+        # in supabase/migrations/ is applied by definition. The one state that
+        # breaks the live site is the one state those checks cannot observe.
+        #
+        # Deliberately NOT in the `check` job. On a pull request the hosted
+        # project legitimately does not have the branch's migration yet, so
+        # gating there would block every migration-bearing PR for being what it
+        # is. The invariant belongs at the publish, which is where it is broken.
+        #
+        # Fails closed: a missing token, a call that did not complete, or output
+        # it cannot read all refuse the publish. That is the safe direction —
+        # Pages keeps serving the current deploy, so the site does not go down,
+        # it stays where it is until somebody applies the migration.
+        run: node scripts/check-migrations-applied.mjs
+        env:
+          # ISSUE A SCOPED TOKEN, NOT A PERSONAL ONE. `supabase migration list
+          # --help` names what it needs, and this step reads and never writes:
+          #
+          #   projects_read
+          #   database_pooling_config_read
+          #   branching_production_read
+          #   database_write   (required because --password is NOT passed)
+          #
+          # That last one is not a mistake and the list is not shorter than it
+          # looks: the help says `database_write` "May be required (with
+          # --remote, without --password)", so a token scoped to only the three
+          # read permissions may fail the command and block every deploy — the
+          # one failure a gate must not have. An earlier revision of this
+          # comment listed only the three and would have done exactly that.
+          #
+          # Passing a database password would drop `database_write`, and we
+          # deliberately do NOT: storing the Postgres password as a second CI
+          # secret is a broader exposure than the scope it removes, and a
+          # database-password connection is not bound by the token's scopes at
+          # all. Neither arrangement is read-only end to end. A full personal
+          # access token also works and is the fallback, but it lets this job do
+          # anything to the account. See HAL-1556.
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          # A variable, not a secret, for the same reason the two above are:
+          # the project ref is the subdomain of a URL that ships inside the
+          # public bundle, and masking it would hide it from the log of the
+          # very check that reports which project it asked. The script also
+          # refuses a SUPABASE_PROJECT_REF that disagrees with this URL, so the
+          # gate cannot clear one project while the bundle targets another.
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+
       - name: Build the static export for Pages
         # A project site is served from /<repo>/, so the base path has to be
         # baked in at build time. The `check` job builds WITHOUT it, at the
