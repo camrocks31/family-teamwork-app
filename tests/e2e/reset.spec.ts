@@ -171,7 +171,6 @@ test("a genuine recovery link still reaches the form and changes the password", 
 
   await expect(page.getByLabel("New password")).toBeVisible({ timeout: 15_000 });
   await page.getByLabel("New password").fill(NEW_PASSWORD);
-  await page.getByLabel("Type it again").fill(NEW_PASSWORD);
   await page.getByRole("button", { name: "Save new password" }).click();
 
   await expect(page.getByRole("status")).toContainText(/password is changed/i, {
@@ -256,7 +255,6 @@ test("a forged type=recovery fragment cannot change the password", async ({ page
   await page.waitForLoadState("networkidle");
   if ((await field.count()) > 0) {
     await field.fill(ATTACKER_PASSWORD);
-    await page.getByLabel("Type it again").fill(ATTACKER_PASSWORD);
     await page.getByRole("button", { name: "Save new password" }).click();
     // Refused, and the page says so rather than claiming success.
     await expect(page.getByRole("main").getByRole("alert")).toBeVisible({ timeout: 15_000 });
@@ -276,3 +274,22 @@ test("a forged type=recovery fragment cannot change the password", async ({ page
   expect(forgedRejected, "the forged change must not have taken effect").not.toBeNull();
 });
 
+test("a password can be revealed and hidden again", async ({ page }) => {
+  // The reason the reset form no longer asks for the password twice: you can
+  // read the one box. Asserted on the sign-in form because it needs no
+  // fixture, but it is the same component on both.
+  await page.goto("/");
+
+  const field = page.getByLabel("Password");
+  await field.fill("thumb-landed-between-two-keys");
+  await expect(field).toHaveAttribute("type", "password");
+
+  await page.getByRole("button", { name: "Show what you typed" }).click();
+  await expect(field).toHaveAttribute("type", "text");
+  await expect(field).toHaveValue("thumb-landed-between-two-keys");
+
+  await page.getByRole("button", { name: "Hide what you typed" }).click();
+  await expect(field).toHaveAttribute("type", "password");
+  // Toggling must never clear what was typed.
+  await expect(field).toHaveValue("thumb-landed-between-two-keys");
+});

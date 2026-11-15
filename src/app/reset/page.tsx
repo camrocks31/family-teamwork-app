@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { appUrl, getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { PasswordField } from "@/components/password-field";
 
 /**
  * Set a new password, arrived at from a recovery email.
@@ -77,7 +78,6 @@ export default function ResetPasswordPage() {
       : { kind: "expired", detail: "This hub has no Supabase connection configured." },
   );
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -136,11 +136,6 @@ export default function ResetPasswordPage() {
       setError("Please use at least 8 characters.");
       return;
     }
-    if (password !== confirm) {
-      setError("Those two passwords do not match.");
-      return;
-    }
-
     setBusy(true);
     const { error: updateError } = await getSupabaseClient().auth.updateUser({ password });
     setBusy(false);
@@ -205,37 +200,14 @@ export default function ResetPasswordPage() {
           onSubmit={handleSubmit}
           className="flex flex-col gap-4 rounded-[var(--radius-card)] border border-line bg-surface p-6"
         >
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="new-password" className="text-sm font-semibold">
-              New password
-            </label>
-            <input
-              id="new-password"
-              name="new-password"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-line"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="confirm-password" className="text-sm font-semibold">
-              Type it again
-            </label>
-            <input
-              id="confirm-password"
-              name="confirm-password"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-line"
-            />
-          </div>
+          <PasswordField
+            id="new-password"
+            label="New password"
+            autoComplete="new-password"
+            value={password}
+            onChange={setPassword}
+            hint="At least 8 characters. Tap Show to check it before you save."
+          />
 
           {error && (
             <p
