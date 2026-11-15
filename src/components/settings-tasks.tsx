@@ -22,7 +22,10 @@ interface TaskRow {
   is_active: boolean;
   location_space_id: string | null;
   occurrence_mode: "shared" | "per_member";
+  assignment_mode: "assigned" | "open";
   title: string;
+  reason: string | null;
+  counts_toward_rewards: boolean;
   recurrence: "daily" | "school_day" | "one_off";
   criteria: string[];
   assigned: string[];
@@ -32,6 +35,7 @@ interface Member {
   id: string;
   display_name: string;
   role: "parent" | "child";
+  min_chosen_jobs?: number;
 }
 
 const RECURRENCE_LABEL: Record<TaskRow["recurrence"], string> = {
@@ -63,9 +67,9 @@ export function SettingsTasks({
     const { data, error } = await supabase
       .from("task_definitions")
       .select(
-        `id, is_active, location_space_id, occurrence_mode,
+        `id, is_active, location_space_id, occurrence_mode, assignment_mode,
          task_definition_revisions!task_definitions_current_revision_fk (
-           title, recurrence,
+           title, recurrence, reason, counts_toward_rewards,
            task_definition_criteria!task_definition_criteria_revision_id_fkey ( text, display_order )
          ),
          task_assignments!task_assignments_definition_id_fkey ( member_id )`,
@@ -78,8 +82,11 @@ export function SettingsTasks({
       is_active: boolean;
       location_space_id: string | null;
       occurrence_mode: "shared" | "per_member";
+      assignment_mode: "assigned" | "open";
       task_definition_revisions: {
         title: string;
+        reason: string | null;
+        counts_toward_rewards: boolean;
         recurrence: TaskRow["recurrence"];
         task_definition_criteria: { text: string; display_order: number }[];
       } | null;
@@ -94,7 +101,10 @@ export function SettingsTasks({
           is_active: r.is_active,
           location_space_id: r.location_space_id,
           occurrence_mode: r.occurrence_mode,
+          assignment_mode: r.assignment_mode,
           title: r.task_definition_revisions!.title,
+          reason: r.task_definition_revisions!.reason,
+          counts_toward_rewards: r.task_definition_revisions!.counts_toward_rewards,
           recurrence: r.task_definition_revisions!.recurrence,
           criteria: [...r.task_definition_revisions!.task_definition_criteria]
             .sort((a, b) => a.display_order - b.display_order)
@@ -155,8 +165,20 @@ export function SettingsTasks({
                   p_space_id: values.spaceId,
                   p_occurrence_mode: values.occurrenceMode,
                   p_recurrence: values.recurrence,
+                  // Null for an open job, so the children's own choices are
+                  // never in the payload at all. save_task ignores it for an
+                  // open definition anyway, but a form that cannot send the
+                  // wrong thing is better than one that relies on being
+                  // ignored.
                   p_subject_member_ids:
-                    values.occurrenceMode === "per_member" ? values.assigned : [],
+                    values.assignmentMode === "open"
+                      ? null
+                      : values.occurrenceMode === "per_member"
+                        ? values.assigned
+                        : [],
+                  p_reason: values.reason || null,
+                  p_assignment_mode: values.assignmentMode,
+                  p_counts_toward_rewards: values.countsTowardRewards,
                 });
                 if (error) throw new Error(error.message);
               },
@@ -185,6 +207,8 @@ export function SettingsTasks({
         Editing a job keeps the old wording on days already recorded.
       </p>
 
+      <HowManyPicked members={members} onError={onError} onNote={onNote} />
+
       <ul className="mt-4 flex flex-col gap-3">
         {tasks.map((t) => (
           <li
@@ -206,7 +230,13 @@ export function SettingsTasks({
                   {" · "}
                   {RECURRENCE_LABEL[t.recurrence]}
                   {" · "}
-                  {t.occurrence_mode === "shared" ? "Anyone" : "Each child"}
+                  {t.assignment_mode === "open"
+                    ? "Anyone can take it"
+                    : t.occurrence_mode === "shared"
+                      ? "Anyone"
+                      : "Each child"}
+                  {" · "}
+                  {t.counts_toward_rewards ? "Counts for rewards" : "No points"}
                   {" · "}
                   {t.criteria.length}{" "}
                   {t.criteria.length === 1 ? "thing to check" : "things to check"}
@@ -244,11 +274,91 @@ export function SettingsTasks({
   );
 }
 
+/**
+ * How many of the spare jobs each person is ASKED to pick.
+ *
+ * Asked, not made to. The number is shown on the child's own page as a
+ * shortfall and nothing is blocked if they hold fewer — a minimum the app
+ * enforced would be an assignment wearing a choice's clothes, and would also
+ * trap a child who wants to swap one job for another.
+ *
+ * Zero means nothing is asked of that person, which is the default and is a
+ * perfectly good answer for the youngest.
+ */
+function HowManyPicked({
+  members,
+  onError,
+  onNote,
+}: {
+  members: Member[];
+  onError: (message: string | null) => void;
+  onNote: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const children = members.filter((m) => m.role === "child");
+  if (children.length === 0) return null;
+
+  async function save(member: Member, value: number) {
+    setBusy(true);
+    onError(null);
+    try {
+      const { error } = await getSupabaseClient()
+        .from("family_members")
+        .update({ min_chosen_jobs: value })
+        .eq("id", member.id);
+      if (error) throw new Error(error.message);
+      onNote(
+        value === 0
+          ? `Nothing is asked of ${member.display_name}.`
+          : `${member.display_name} is asked to pick ${value}.`,
+      );
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-[var(--radius-card)] border border-line bg-surface p-4">
+      <p className="text-sm font-semibold">How many spare jobs each person picks</p>
+      <p className="mt-0.5 text-sm text-muted">
+        Shown on their own page as a gap, never enforced. Zero asks nothing.
+      </p>
+      <ul className="mt-3 flex flex-wrap gap-4">
+        {children.map((c) => (
+          <li key={c.id} className="flex items-center gap-2">
+            <label htmlFor={`min-${c.id}`} className="text-sm font-medium">
+              {c.display_name}
+            </label>
+            <input
+              id={`min-${c.id}`}
+              type="number"
+              min={0}
+              max={20}
+              disabled={busy}
+              defaultValue={c.min_chosen_jobs ?? 0}
+              onBlur={(e) => {
+                const next = Math.max(0, Number(e.target.value) || 0);
+                if (next !== (c.min_chosen_jobs ?? 0)) void save(c, next);
+              }}
+              className="min-h-[44px] w-20 rounded-xl border border-line bg-ground px-3 text-base"
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 interface FormValues {
   title: string;
+  reason: string;
   criteria: string[];
   spaceId: string | null;
   occurrenceMode: "shared" | "per_member";
+  assignmentMode: "assigned" | "open";
+  countsTowardRewards: boolean;
   recurrence: TaskRow["recurrence"];
   assigned: string[];
 }
@@ -280,6 +390,13 @@ function TaskForm({
     task?.recurrence ?? "daily",
   );
   const [assigned, setAssigned] = useState<string[]>(task?.assigned ?? []);
+  const [reason, setReason] = useState(task?.reason ?? "");
+  const [assignmentMode, setAssignmentMode] = useState<"assigned" | "open">(
+    task?.assignment_mode ?? "assigned",
+  );
+  const [countsTowardRewards, setCountsTowardRewards] = useState(
+    task?.counts_toward_rewards ?? true,
+  );
 
   const filled = criteria.map((c) => c.trim()).filter(Boolean);
   const valid = title.trim().length > 0 && filled.length > 0;
@@ -291,9 +408,14 @@ function TaskForm({
         if (!valid) return;
         onSave({
           title: title.trim(),
+          reason: reason.trim(),
           criteria: filled,
           spaceId: spaceId || null,
-          occurrenceMode,
+          // An open job has to be per-member: a shared job has no subject to
+          // hold it, and the database refuses the combination outright.
+          occurrenceMode: assignmentMode === "open" ? "per_member" : occurrenceMode,
+          assignmentMode,
+          countsTowardRewards,
           recurrence,
           assigned,
         });
@@ -309,6 +431,24 @@ function TaskForm({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           required
+          className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="task-reason" className="text-sm font-semibold">
+          Why this matters
+        </label>
+        <p className="text-sm text-muted">
+          One honest sentence, in your own words. The children read this, so
+          &ldquo;because I said so&rdquo; is worse than leaving it blank. It can
+          say the job is dull.
+        </p>
+        <input
+          id="task-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="If this room is gross nobody wants to be in here, you included."
           className="min-h-[48px] rounded-xl border border-line bg-ground px-3 text-base"
         />
       </div>
@@ -406,7 +546,46 @@ function TaskForm({
         </div>
       </div>
 
-      {occurrenceMode === "per_member" && (
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="task-assignment" className="text-sm font-semibold">
+          Given out, or picked up?
+        </label>
+        <select
+          id="task-assignment"
+          value={assignmentMode}
+          onChange={(e) => setAssignmentMode(e.target.value as "assigned" | "open")}
+          className="min-h-[48px] rounded-xl border border-line bg-ground px-3"
+        >
+          <option value="assigned">I say who does it</option>
+          <option value="open">Anyone can take it</option>
+        </select>
+        {assignmentMode === "open" && (
+          <p className="text-sm text-muted">
+            It will show up on every child&rsquo;s page as going spare, and
+            whoever takes it keeps it until they give it back.
+          </p>
+        )}
+      </div>
+
+      <label className="flex min-h-[44px] items-start gap-3">
+        <input
+          type="checkbox"
+          checked={countsTowardRewards}
+          onChange={(e) => setCountsTowardRewards(e.target.checked)}
+          className="mt-1 h-5 w-5"
+        />
+        <span>
+          <span className="text-sm font-semibold">This one counts for rewards</span>
+          <span className="block text-sm text-muted">
+            Leave it off for anything you want them to end up liking — cooking,
+            reading, helping each other. Paying for those is how a child learns
+            they were only ever worth doing for the points. Bins and bathrooms
+            are safe to pay for.
+          </span>
+        </span>
+      </label>
+
+      {assignmentMode === "assigned" && occurrenceMode === "per_member" && (
         <fieldset className="flex flex-col gap-2">
           <legend className="text-sm font-semibold">Which children?</legend>
           <div className="flex flex-wrap gap-3">

@@ -33,6 +33,7 @@ interface Member {
   avatar_emoji: string | null;
   accent_color: string | null;
   simple_view: boolean;
+  min_chosen_jobs: number;
   has_pin: boolean;
 }
 
@@ -67,7 +68,9 @@ function Settings() {
 
     const { data: people, error: peopleError } = await supabase
       .from("family_members")
-      .select("id, display_name, role, avatar_emoji, accent_color, simple_view, display_order")
+      .select(
+        "id, display_name, role, avatar_emoji, accent_color, simple_view, display_order, min_chosen_jobs",
+      )
       .eq("is_active", true)
       // The family's own order, as on the dashboard. Ordering by name put
       // them in alphabetical order — "Child One, Child Three, Child Two" —
